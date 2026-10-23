@@ -162,6 +162,55 @@ describe('discordType.render', () => {
     expect(embed.fields?.[3]?.value).toBe('1h 2m');
   });
 
+  const avatar = 'https://plex.tv/users/abc123/avatar?c=1700000000';
+  const withAvatar = (thumbUrl: string | null) =>
+    createMockActiveSession({
+      durationMs: 60_000,
+      user: { id: 'su-1', username: 'testuser', thumbUrl, identityName: 'Test User' },
+    });
+
+  it.each(['session_started', 'session_stopped'] as const)(
+    'names the viewer with their picture on %s',
+    async (type) => {
+      const embed = await render({ type, payload: withAvatar(avatar) });
+
+      expect(embed.author).toEqual({ name: 'Test User', icon_url: avatar });
+      expect(embed.fields?.[0]).toEqual({ name: 'User', value: 'Test User', inline: true });
+    }
+  );
+
+  it('names the viewer with their picture on a violation', async () => {
+    const embed = await render({
+      type: 'violation',
+      payload: { ...violation, user: { ...violation.user, thumbUrl: avatar } },
+    });
+
+    expect(embed.author).toEqual({ name: 'Test User', icon_url: avatar });
+  });
+
+  it.each([
+    [null],
+    ['/Users/abc/Images/Primary'],
+    ['http://plex.tv/users/abc/avatar'],
+    ['https://192.168.1.10:32400/photo/:/transcode?url=/x'],
+    ['https://plex.local:32400/library/metadata/1/thumb'],
+    ['https://media/users/abc/avatar'],
+    ['https://[::1]/avatar'],
+    ['https://plex.example.com/photo?X-Plex-Token=secret'],
+    ['https://jellyfin.example.com/Users/abc/Images/Primary?api_key=secret'],
+    ['https://user:pass@plex.tv/users/abc/avatar'],
+  ])('leaves the author off when the picture is %s', async (thumbUrl) => {
+    const started = await render({ type: 'session_started', payload: withAvatar(thumbUrl) });
+    const flagged = await render({
+      type: 'violation',
+      payload: { ...violation, user: { ...violation.user, thumbUrl } },
+    });
+
+    expect(started.author).toBeUndefined();
+    expect(flagged.author).toBeUndefined();
+    expect(JSON.stringify([started, flagged])).not.toMatch(/secret|192\.168|plex\.local/);
+  });
+
   it('builds the server down embed', async () => {
     const embed = await render({
       type: 'server_down',
@@ -211,6 +260,7 @@ describe('discordType.render', () => {
 describe('discordType.deliver', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it('posts the embed as a Tracearr webhook message', async () => {
@@ -233,6 +283,48 @@ describe('discordType.deliver', () => {
     expect(body.embeds).toHaveLength(1);
     expect(body.embeds[0]).toMatchObject({ title: 'Stream Started', color: 0x3498db });
     expect(typeof body.embeds[0].timestamp).toBe('string');
+  });
+
+  it('posts under DISCORD_USERNAME and DISCORD_AVATAR_URL when they are set', async () => {
+    vi.stubEnv('DISCORD_USERNAME', ' Statler & Waldorf ');
+    vi.stubEnv('DISCORD_AVATAR_URL', 'https://system.example.com/avatars/statler-waldorf.png');
+    const f = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', f);
+
+    await discordType.deliver({ embed: { title: 'Stream Started', color: 1 } }, config, deliverCtx);
+
+    const body = JSON.parse(f.mock.calls[0]?.[1].body);
+    expect(body.username).toBe('Statler & Waldorf');
+    expect(body.avatar_url).toBe('https://system.example.com/avatars/statler-waldorf.png');
+  });
+
+  it.each([
+    ['http://system.example.com/a.png'],
+    ['https://user:pass@system.example.com/a.png'],
+    ['not a url'],
+    ['/avatars/a.png'],
+  ])('keeps the Tracearr picture when DISCORD_AVATAR_URL is %s', async (avatar) => {
+    vi.stubEnv('DISCORD_AVATAR_URL', avatar);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const f = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', f);
+
+    await discordType.deliver({ embed: { title: 'Stream Started', color: 1 } }, config, deliverCtx);
+
+    const body = JSON.parse(f.mock.calls[0]?.[1].body);
+    expect(body.username).toBe('Tracearr');
+    expect(body.avatar_url).toContain('raw.githubusercontent.com');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('DISCORD_AVATAR_URL'));
+  });
+
+  it('cuts DISCORD_USERNAME to the 80 characters Discord accepts', async () => {
+    vi.stubEnv('DISCORD_USERNAME', 'x'.repeat(100));
+    const f = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', f);
+
+    await discordType.test(config, deliverCtx);
+
+    expect(JSON.parse(f.mock.calls[0]?.[1].body).username).toBe('x'.repeat(80));
   });
 
   it('throws when Discord rejects the webhook', async () => {
@@ -521,6 +613,80 @@ describe('discordType media embeds', () => {
   it('asks for no poster at all when the item has no thumb', async () => {
     await discordType.render(
       { type: 'media_added', payload: { ...seasonPayload, thumbPath: null } },
+      config,
+      systemCtx
+    );
+
+    expect(mockProxyImage).not.toHaveBeenCalled();
+  });
+});
+
+describe('discordType stream posters', () => {
+  afterEach(() => {
+    mockProxyImage.mockResolvedValue({ data: Buffer.alloc(0), contentType: 'image/svg+xml' });
+  });
+
+  // How the poller stores a Live TV episode from an XMLTV guide: no picture of its own and
+  // no channel logo, so its thumb is the show's poster, an outside URL.
+  const showPoster = 'https://guide.example.com/media/artwork/abc-poster.jpg?v=1';
+  const live = createMockActiveSession({
+    serverId: 'server-1',
+    mediaType: 'live',
+    mediaTitle: 'Goats, Snakes, and Dogs',
+    grandparentTitle: 'Animal Control',
+    thumbPath: showPoster,
+    channelThumb: null,
+  });
+
+  it.each(['session_started', 'session_stopped'] as const)(
+    'attaches the show poster a Live TV episode falls back to on %s',
+    async (type) => {
+      mockProxyImage.mockResolvedValue({ data: Buffer.from('jpeg'), contentType: 'image/jpeg' });
+
+      const message = await discordType.render({ type, payload: live }, config, systemCtx);
+
+      expect(mockProxyImage).toHaveBeenCalledWith(
+        expect.objectContaining({ serverId: 'server-1', imagePath: showPoster })
+      );
+      expect(message.embed.thumbnail).toEqual({ url: 'attachment://poster.jpg' });
+      expect(message.poster?.contentType).toBe('image/jpeg');
+    }
+  );
+
+  it('attaches the poster of any other stream too', async () => {
+    mockProxyImage.mockResolvedValue({ data: Buffer.from('png'), contentType: 'image/png' });
+
+    const message = await discordType.render(
+      { type: 'session_started', payload: createMockActiveSession({ serverId: 'server-1' }) },
+      config,
+      systemCtx
+    );
+
+    expect(mockProxyImage).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: 'server-1', imagePath: '/library/metadata/123/thumb' })
+    );
+    expect(message.embed.thumbnail).toEqual({ url: 'attachment://poster.png' });
+  });
+
+  it('sends the stream without a picture when the image proxy refuses the poster', async () => {
+    mockProxyImage.mockRejectedValue(
+      new Error('Image URL origin is not in EXTERNAL_IMAGE_ORIGINS')
+    );
+
+    const message = await discordType.render(
+      { type: 'session_started', payload: live },
+      config,
+      systemCtx
+    );
+
+    expect(message.poster).toBeUndefined();
+    expect(message.embed.thumbnail).toBeUndefined();
+    expect(message.embed.title).toBe('Stream Started');
+  });
+
+  it('asks for no poster when the stream has no thumb', async () => {
+    await discordType.render(
+      { type: 'session_stopped', payload: { ...createMockActiveSession(), thumbPath: null } },
       config,
       systemCtx
     );

@@ -54,6 +54,85 @@ export interface DiscordConfig {
  */
 const AVATAR_URL =
   'https://raw.githubusercontent.com/connorgallopo/Tracearr/main/apps/web/public/web-app-manifest-192x192-transparent.png';
+const USERNAME = 'Tracearr';
+/** Discord refuses a webhook username longer than this. */
+const USERNAME_MAX = 80;
+
+/**
+ * The name and picture the messages are posted under: DISCORD_USERNAME and
+ * DISCORD_AVATAR_URL, else Tracearr's own. The picture must be a public https URL
+ * Discord can fetch, with no credentials; anything else is ignored with a warning.
+ */
+export function discordSender(): { username: string; avatarUrl: string } {
+  const name = (process.env.DISCORD_USERNAME ?? '').trim();
+  return {
+    username: name ? [...name].slice(0, USERNAME_MAX).join('') : USERNAME,
+    avatarUrl: senderAvatar(),
+  };
+}
+
+// The refused DISCORD_AVATAR_URL last warned about, so a bad value warns once, not per message.
+let warnedAvatar: string | null = null;
+
+function senderAvatar(): string {
+  const avatar = (process.env.DISCORD_AVATAR_URL ?? '').trim();
+  if (!avatar) return AVATAR_URL;
+  if (isPublicHttpsUrl(avatar)) return avatar;
+  if (warnedAvatar !== avatar) {
+    warnedAvatar = avatar;
+    console.warn(
+      '[Discord] Ignoring DISCORD_AVATAR_URL: it is not an https URL without credentials'
+    );
+  }
+  return AVATAR_URL;
+}
+
+/** An https URL with a host and no credentials: something Discord itself can fetch. */
+export function isPublicHttpsUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return url.protocol === 'https:' && url.hostname !== '' && !url.username && !url.password;
+}
+
+/** Query parameters that could carry a credential, which must never reach Discord. */
+const SECRET_PARAM = /token|key|auth|sig|secret|pass/i;
+
+/**
+ * A viewer's picture Discord may fetch itself: a public https URL (a Plex account's
+ * plex.tv avatar, say). Anything that could name the media server or the user's own
+ * network (a relative path, an IP literal, a single-label or local host) or carry a
+ * credential is refused, and the message goes without it.
+ */
+export function publicPictureUrl(value: string | null | undefined): string | null {
+  if (!value || !isPublicHttpsUrl(value)) return null;
+  const url = new URL(value);
+  const host = url.hostname.toLowerCase();
+  if (
+    !host.includes('.') ||
+    host.startsWith('[') ||
+    /^[\d.]+$/.test(host) ||
+    /\.(local|lan|home|internal|localdomain|home\.arpa)$/.test(host)
+  ) {
+    return null;
+  }
+  for (const name of url.searchParams.keys()) {
+    if (SECRET_PARAM.test(name)) return null;
+  }
+  return value;
+}
+
+/** The viewer as the embed's author, with their picture when it is one Discord may fetch. */
+function viewerAuthor(
+  name: string,
+  thumbUrl: string | null | undefined
+): Pick<DiscordEmbed, 'author'> {
+  const icon = publicPictureUrl(thumbUrl);
+  return icon ? { author: { name, icon_url: icon } } : {};
+}
 
 /** Discord picks the renderer off the extension, so the name has to match the bytes. */
 const POSTER_EXTENSIONS: Record<string, string> = {
@@ -73,7 +152,7 @@ export interface DiscordEmbed {
   description?: string;
   url?: string;
   color: number;
-  author?: { name: string };
+  author?: { name: string; icon_url?: string };
   fields?: DiscordField[];
   thumbnail?: { url: string };
   footer?: { text: string };
@@ -97,14 +176,17 @@ function buildViolationEmbed(payload: NotificationPayload, ctx: ViolationContext
 
   const text = textOf(payload, { title: payload.title, message: '' });
 
+  const userName = violation.user.identityName ?? violation.user.username;
+
   return {
+    ...viewerAuthor(userName, violation.user.thumbUrl),
     title: text.title,
     ...(text.message && { description: text.message }),
     color,
     fields: [
       {
         name: 'User',
-        value: violation.user.identityName ?? violation.user.username,
+        value: userName,
         inline: true,
       },
       {
@@ -164,6 +246,7 @@ function buildSessionStartedEmbed(payload: NotificationPayload, ctx: SessionCont
   const text = textOf(payload, { title: 'Stream Started', message: '' });
 
   return {
+    ...viewerAuthor(getUserDisplayName(session), session.user.thumbUrl),
     title: text.title,
     ...(text.message && { description: text.message }),
     color: 0x3498db, // Blue
@@ -198,6 +281,7 @@ function buildSessionStoppedEmbed(payload: NotificationPayload, ctx: SessionCont
   const text = textOf(payload, { title: 'Stream Ended', message: '' });
 
   return {
+    ...viewerAuthor(getUserDisplayName(session), session.user.thumbUrl),
     title: text.title,
     ...(text.message && { description: text.message }),
     color: 0x95a5a6, // Gray
@@ -382,6 +466,27 @@ async function buildMediaMessage(
     ctx.type === 'media_added'
       ? buildMediaAddedEmbed(payload, ctx, links)
       : buildMediaUpgradedEmbed(payload, ctx, links);
+  return withPoster(embed, poster);
+}
+
+/**
+ * A stream shows the poster its Now Playing card does: the session's thumb, which for a
+ * Live TV episode with no picture of its own is already the channel logo or the show's
+ * poster. An outside URL there is fetched only as the image proxy allows
+ * (EXTERNAL_IMAGE_ORIGINS, through the media server).
+ */
+async function buildSessionMessage(
+  payload: NotificationPayload,
+  ctx: SessionContext
+): Promise<DiscordMessage> {
+  const poster = await fetchPoster(ctx.session.serverId, ctx.session.thumbPath);
+  return withPoster(buildEmbed(payload), poster);
+}
+
+function withPoster(
+  embed: DiscordEmbed,
+  poster: { data: Buffer; contentType: string } | undefined
+): DiscordMessage {
   if (!poster) return { embed };
   const filename = posterFilename(poster.contentType);
   return { embed: { ...embed, thumbnail: { url: `attachment://${filename}` } }, poster };
@@ -414,12 +519,18 @@ export function fitEmbed(embed: DiscordEmbed): DiscordEmbed {
   return body ? { ...fitted, description: body } : fitted;
 }
 
-/** Media events fetch a poster and their links; everything else renders from the payload alone. */
+/**
+ * Media events fetch a poster and their links, streams their poster; everything else
+ * renders from the payload alone.
+ */
 async function buildMessage(payload: NotificationPayload): Promise<DiscordMessage> {
+  const { context } = payload;
   const message =
-    payload.context.type === 'media_added' || payload.context.type === 'media_upgraded'
-      ? await buildMediaMessage(payload, payload.context)
-      : { embed: buildEmbed(payload) };
+    context.type === 'media_added' || context.type === 'media_upgraded'
+      ? await buildMediaMessage(payload, context)
+      : context.type === 'stream_started' || context.type === 'stream_stopped'
+        ? await buildSessionMessage(payload, context)
+        : { embed: buildEmbed(payload) };
   return { ...message, embed: fitEmbed(message.embed) };
 }
 
@@ -465,9 +576,10 @@ async function post(
   ctx: DeliverContext
 ): Promise<void> {
   const filename = message.poster && posterFilename(message.poster.contentType);
+  const sender = discordSender();
   const payload = {
-    username: 'Tracearr',
-    avatar_url: AVATAR_URL,
+    username: sender.username,
+    avatar_url: sender.avatarUrl,
     allowed_mentions: { parse: [] },
     embeds: [{ ...message.embed, timestamp: new Date().toISOString() }],
     ...(filename && { attachments: [{ id: 0, filename }] }),

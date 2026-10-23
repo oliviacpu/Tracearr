@@ -111,16 +111,41 @@ describe('discordType.render', () => {
 
     expect(embed.title).toBe('Stream Started');
     expect(embed.color).toBe(0x3498db);
-    expect(fieldNames(embed)).toEqual([
-      'User',
-      'Media',
-      'Episode',
-      'Playback',
-      'Location',
-      'Player',
-    ]);
+    expect(fieldNames(embed)).toEqual(['User', 'Media', 'Year', 'Playback', 'Location', 'Player']);
     expect(embed.fields?.[3]?.value).toBe('Direct Play');
     expect(embed.fields?.[4]?.value).toBe('New York, US');
+  });
+
+  it('labels the year of a movie as Year, not Episode', async () => {
+    const movie = createMockActiveSession({
+      mediaType: 'movie',
+      mediaTitle: 'The Greasy Strangler',
+      grandparentTitle: null,
+      seasonNumber: null,
+      episodeNumber: null,
+      year: 2016,
+    });
+    for (const type of ['session_started', 'session_stopped'] as const) {
+      const embed = await render({ type, payload: movie });
+      expect(embed.fields?.find((f) => f.name === 'Media')?.value).toBe('The Greasy Strangler');
+      expect(embed.fields?.find((f) => f.name === 'Year')?.value).toBe('2016');
+      expect(fieldNames(embed)).not.toContain('Episode');
+    }
+  });
+
+  it('shows a Live TV programme with its show like an episode', async () => {
+    const live = createMockActiveSession({
+      mediaType: 'live',
+      mediaTitle: 'Baby Kangaroos and Chickens',
+      grandparentTitle: 'Animal Control',
+      seasonNumber: 2,
+      episodeNumber: 5,
+    });
+    const embed = await render({ type: 'session_started', payload: live });
+    expect(embed.fields?.find((f) => f.name === 'Media')?.value).toBe('Animal Control');
+    expect(embed.fields?.find((f) => f.name === 'Episode')?.value).toContain(
+      'Baby Kangaroos and Chickens'
+    );
   });
 
   it('marks a placed local session in the Location field', async () => {
@@ -158,7 +183,7 @@ describe('discordType.render', () => {
 
     expect(embed.title).toBe('Stream Ended');
     expect(embed.color).toBe(0x95a5a6);
-    expect(fieldNames(embed)).toEqual(['User', 'Media', 'Episode', 'Duration']);
+    expect(fieldNames(embed)).toEqual(['User', 'Media', 'Year', 'Duration']);
     expect(embed.fields?.[3]?.value).toBe('1h 2m');
   });
 

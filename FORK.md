@@ -100,6 +100,15 @@ Only media added and media upgraded messages uploaded a poster, so a stream mess
 - An outside URL is fetched only as the image proxy allows (`EXTERNAL_IMAGE_ORIGINS`, through the Plex server's photo
   transcoder); a refused or failed fetch sends the message without a picture, as before.
 
+### A movie's year is labelled Year in stream messages
+
+The Discord stream embeds named their second media field "Episode" whatever the media was, so a movie showed
+"Episode: 2016" (upstream behaviour).
+
+- The field is "Year" for a movie and "Episode" for an episode (`getMediaDisplay` says which its subtitle is).
+- A Live TV programme that carries its show (an XMLTV guide episode) reads like an episode in every destination: the
+  show as the media, the season, episode and programme title under Episode.
+
 ### A Live TV programme change isn't a stream ending and another starting
 
 Plex starts a new Live TV session (new session key, new metadata) at every guide programme boundary, so someone

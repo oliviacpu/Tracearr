@@ -18,21 +18,32 @@ export function formatDuration(ms: number): string {
 }
 
 /** Get display title for media (matches UI card logic) */
+/**
+ * The media line of a session message: the show and its episode, or the title and its year. `subtitleLabel` names
+ * what `subtitle` is, so a movie's year isn't labelled "Episode". A Live TV programme that carries its show (an
+ * XMLTV guide episode, e.g. from Tunarr) reads like an episode.
+ */
 export function getMediaDisplay(session: ActiveSession): {
   title: string;
   subtitle: string | null;
+  subtitleLabel: 'Episode' | 'Year';
 } {
-  if (session.mediaType === 'episode' && session.grandparentTitle) {
+  if (
+    (session.mediaType === 'episode' || session.mediaType === 'live') &&
+    session.grandparentTitle
+  ) {
     const episodeInfo =
       formatEpisodeLabel(session.seasonNumber, session.episodeNumber, { spaced: true }) ?? '';
     return {
       title: session.grandparentTitle,
       subtitle: episodeInfo ? `${episodeInfo} · ${session.mediaTitle}` : session.mediaTitle,
+      subtitleLabel: 'Episode',
     };
   }
   return {
     title: session.mediaTitle,
     subtitle: session.year ? `${session.year}` : null,
+    subtitleLabel: 'Year',
   };
 }
 

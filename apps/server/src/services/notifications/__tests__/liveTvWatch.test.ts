@@ -132,6 +132,22 @@ describe('watchEndedBy', () => {
     expect(watchEndedBy(b, [a, b], new Set(['a']))?.durationMs).toBe(570_000);
   });
 
+  it('stays quiet once the programme that carried on has reported the end', () => {
+    const a = seg('a', 0, 1015);
+    const b = seg('b', 1028, 1600);
+    expect(watchEndedBy(a, [a, b], new Set(['b']))).toBeNull();
+  });
+
+  it('still sends a stop whose end already went out elsewhere: what followed is a new watch', () => {
+    const a = seg('a', 0, 1015);
+    const b = seg('b', 1028, null);
+    expect(watchEndedBy(a, [a, b], new Set(['a']))).toEqual({
+      startedAt: at(0),
+      durationMs: 1_015_000,
+      segments: 1,
+    });
+  });
+
   it('lets exactly one of two overlapping sessions report the end', () => {
     const a = seg('a', 0, 1000);
     const b = seg('b', 990, 1000);

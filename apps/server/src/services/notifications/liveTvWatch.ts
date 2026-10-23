@@ -106,8 +106,12 @@ export function continuesWatch(
 /**
  * The watch a stopped session ends, or null when another session of the viewer carries
  * on past it (one that started before this stop plus the gap and ends later): that one's
- * stop speaks for the watch. The watch is every session joined to this one by gaps no
- * longer than LIVE_TV_CHAIN_GAP_MS, back to one whose Stream Ended already went out.
+ * stop speaks for the watch, even once it has gone out, so a stop held late (a restart
+ * with overdue jobs) can't send a second, stale Stream Ended. The exception is a stop
+ * whose own Stream Ended already went out (to another destination): what came after it
+ * is a new watch, so it doesn't silence this one. The watch is every session joined to
+ * this one by gaps no longer than LIVE_TV_CHAIN_GAP_MS, back to one whose Stream Ended
+ * already went out.
  */
 export function watchEndedBy(
   stop: LiveSegment,
@@ -115,13 +119,12 @@ export function watchEndedBy(
   ended: ReadonlySet<string>
 ): { startedAt: Date; durationMs: number; segments: number } | null {
   const stopEnd = endOf(stop);
-  const carriesOn = segments.some(
-    (r) =>
-      r.id !== stop.id &&
-      !ended.has(r.id) &&
-      ms(r.startedAt) <= stopEnd + LIVE_TV_CHAIN_GAP_MS &&
-      endsAfter(r, stop)
-  );
+  const carriesOn =
+    !ended.has(stop.id) &&
+    segments.some(
+      (r) =>
+        r.id !== stop.id && ms(r.startedAt) <= stopEnd + LIVE_TV_CHAIN_GAP_MS && endsAfter(r, stop)
+    );
   if (carriesOn) return null;
 
   const watch = new Map<string, LiveSegment>([[stop.id, stop]]);
@@ -225,7 +228,7 @@ export async function resolveHeldLiveTvStop(session: ActiveSession): Promise<Act
     const segments = await viewerSegments(session, ms(session.startedAt));
     const self = selfSegment(session, segments);
     const all = segments.some((s) => s.id === self.id) ? segments : [...segments, self];
-    const ended = await endedAmong(all.map((s) => s.id).filter((id) => id !== session.id));
+    const ended = await endedAmong(all.map((s) => s.id));
     watch = watchEndedBy(self, all, ended);
   } catch (error) {
     console.warn('[Notifications] Live TV watch lookup failed, sending the stop as it is', error);

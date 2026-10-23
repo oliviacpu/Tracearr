@@ -206,7 +206,7 @@ function buildViolationEmbed(payload: NotificationPayload, ctx: ViolationContext
 
 function buildSessionStartedEmbed(payload: NotificationPayload, ctx: SessionContext): DiscordEmbed {
   const { session } = ctx;
-  const { title: mediaTitle, subtitle } = getMediaDisplay(session);
+  const { title: mediaTitle, subtitle, subtitleLabel } = getMediaDisplay(session);
   const playbackType = getPlaybackType(session);
 
   const fields: DiscordField[] = [
@@ -223,7 +223,7 @@ function buildSessionStartedEmbed(payload: NotificationPayload, ctx: SessionCont
   ];
 
   if (subtitle) {
-    fields.push({ name: 'Episode', value: subtitle, inline: true });
+    fields.push({ name: subtitleLabel, value: subtitle, inline: true });
   }
 
   fields.push({ name: 'Playback', value: playbackType, inline: true });
@@ -256,7 +256,7 @@ function buildSessionStartedEmbed(payload: NotificationPayload, ctx: SessionCont
 
 function buildSessionStoppedEmbed(payload: NotificationPayload, ctx: SessionContext): DiscordEmbed {
   const { session } = ctx;
-  const { title: mediaTitle, subtitle } = getMediaDisplay(session);
+  const { title: mediaTitle, subtitle, subtitleLabel } = getMediaDisplay(session);
   const durationStr = session.durationMs ? formatDuration(session.durationMs) : 'Unknown';
 
   const fields: DiscordField[] = [
@@ -273,7 +273,7 @@ function buildSessionStoppedEmbed(payload: NotificationPayload, ctx: SessionCont
   ];
 
   if (subtitle) {
-    fields.push({ name: 'Episode', value: subtitle, inline: true });
+    fields.push({ name: subtitleLabel, value: subtitle, inline: true });
   }
 
   fields.push({ name: 'Duration', value: durationStr, inline: true });

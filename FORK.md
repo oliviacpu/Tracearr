@@ -179,7 +179,8 @@ guide fills them now; see the channel patch below).
 ### A Live TV session without a channel takes it from the Plex guide, and the UI shows it
 
 Plex names no channel on a Live TV session from an XMLTV guide (Tunarr), so Tracearr stored none, and the web UI
-never showed a session's channel anyway: a Live TV card read like a film with no year.
+never showed a session's channel anyway: a Live TV card read like a film with no year, titled with the episode
+alone.
 
 - The poller and the SSE path fill a Plex Live TV session's `channelTitle` (the name alone, "Sitcoms"),
   `channelIdentifier` (the number viewers know, "3") and `channelThumb` (the guide's logo) from the guide airing it
@@ -193,8 +194,11 @@ never showed a session's channel anyway: a Live TV card read like a film with no
   server while Live TV plays, plus the DVR list every 10 minutes. A session recorded before its channel was found
   gets it written later; a stored channel is never overwritten. A session that names its own channel, other media
   and Jellyfin or Emby are unchanged.
-- The Now Playing card shows "Channel 3 · Sitcoms" with the logo under the programme, and the session sheet next to
-  "Live TV". The number is shown only when it looks like one ("5", "5.1"), not a guide key like
+- A Live TV programme that carries its show (an XMLTV guide episode) reads like an episode wherever the web UI names
+  media (`getMediaDisplay`), as it already did in notifications: the show as the title, "S03 E10 · Janet(s)" under
+  it, linked like an episode. A programme without a show keeps its own title.
+- The Now Playing card shows "Channel 3 · Sitcoms" with the logo on a line of its own under the programme, and the
+  session sheet next to "Live TV". The number is shown only when it looks like one ("5", "5.1"), not a guide key like
   `C3.51.tunarr.com`. The logo goes through the image proxy (an outside URL only from an origin in
   `EXTERNAL_IMAGE_ORIGINS`, fetched by the Plex server's photo transcoder) and is hidden when it can't load. The
   poster stays the programme's (for an XMLTV episode, its show's).
@@ -215,8 +219,8 @@ none. A live source arrives in real time; what matters is whether the transcoder
   ready point that goes back (a restarted transcode), measures afresh. A Tracearr restart measures from scratch.
 - Both are optional fields of the stored `transcode_info` JSON (no migration), and they don't trigger extra
   database writes. Other media and servers get none.
-- The stream details' Speed row reads "Keeping up" or "Falling behind" (amber), with the measured rate and Plex's own
-  speed in its tooltip; until a pace is measured it shows Plex's speed as before.
+- The stream details' Speed row reads "Ahead" (`keeping_up`) or "Lagging" (`falling_behind`, amber), with the
+  measured rate and Plex's own speed in its tooltip; until a pace is measured it shows Plex's speed as before.
 
 ### A Plex Live TV transcode's bitrate is shown as its maximum
 

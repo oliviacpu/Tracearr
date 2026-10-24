@@ -79,6 +79,12 @@ Every Discord message came from "Tracearr" with the upstream repo's icon, whatev
   itself; anything else is ignored with one warning. A name is cut to the 80 characters Discord accepts. Both are
   passed through by the example compose files and listed in `docker/.env.example`.
 
+### Discord can use the webhook's own name and picture
+
+`DISCORD_USERNAME` and `DISCORD_AVATAR_URL` set to an empty value leave the name or picture out of the message, so
+Discord shows the webhook's own (Server Settings → Integrations → Webhooks). Then a sender's name and picture live
+in one place. Unset, they are still Tracearr's own, as upstream.
+
 ### Discord stream and violation messages show the viewer's picture
 
 A stream or violation message named the viewer only in a field.

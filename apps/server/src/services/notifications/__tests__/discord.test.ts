@@ -342,6 +342,20 @@ describe('discordType.deliver', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('DISCORD_AVATAR_URL'));
   });
 
+  it('leaves the name and picture to the webhook when both are set empty', async () => {
+    vi.stubEnv('DISCORD_USERNAME', '');
+    vi.stubEnv('DISCORD_AVATAR_URL', ' ');
+    const f = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', f);
+
+    await discordType.deliver({ embed: { title: 'Stream Started', color: 1 } }, config, deliverCtx);
+
+    const body = JSON.parse(f.mock.calls[0]?.[1].body);
+    expect(body).not.toHaveProperty('username');
+    expect(body).not.toHaveProperty('avatar_url');
+    expect(body.embeds).toHaveLength(1);
+  });
+
   it('cuts DISCORD_USERNAME to the 80 characters Discord accepts', async () => {
     vi.stubEnv('DISCORD_USERNAME', 'x'.repeat(100));
     const f = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));

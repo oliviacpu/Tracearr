@@ -29,6 +29,7 @@ const liveTranscode: Props = {
   audioDecision: 'copy',
   bitrate: 20761,
   serverType: 'plex',
+  mediaType: 'live',
 };
 
 function renderPanel(overrides: Partial<Props> = {}) {
@@ -71,5 +72,43 @@ describe('StreamDetailsPanel Live TV speed', () => {
 
     expect(screen.queryByTestId('live-pace')).toBeNull();
     expect(screen.getByText('0.8x')).toBeInTheDocument();
+  });
+});
+
+describe('StreamDetailsPanel Live TV bitrate', () => {
+  it('shows Plex’s figures for a Live TV video transcode as its maximum', () => {
+    renderPanel();
+
+    const caps = screen.getAllByTestId('max-bitrate').map((el) => el.textContent);
+    // The overall rate (20,121k video cap plus 640k audio) and the video cap.
+    expect(caps).toEqual(['max 20.8 Mbps', 'max 20.1 Mbps']);
+  });
+
+  it('says a live source has no known bitrate rather than leaving it blank', () => {
+    renderPanel();
+
+    // The video and audio sources; the audio stream has Plex's 640 kbps.
+    expect(screen.getAllByText('Live, unknown')).toHaveLength(2);
+    expect(screen.getByText('640 kbps')).toBeInTheDocument();
+  });
+
+  it('keeps a measured live bitrate as it is', () => {
+    renderPanel({ sourceAudioDetails: { bitrate: 640 }, streamAudioDetails: { channels: 6 } });
+
+    expect(screen.getAllByText('640 kbps')).toHaveLength(2);
+    expect(screen.getAllByText('Live, unknown')).toHaveLength(1);
+  });
+
+  it('leaves the figures plain without a video transcode, and for other media', () => {
+    renderPanel({ videoDecision: 'copy' });
+    expect(screen.queryByTestId('max-bitrate')).toBeNull();
+    expect(screen.getByText('20.8 Mbps')).toBeInTheDocument();
+  });
+
+  it('leaves a film’s transcode and its missing figures as upstream shows them', () => {
+    renderPanel({ mediaType: 'movie' });
+    expect(screen.queryByTestId('max-bitrate')).toBeNull();
+    expect(screen.queryByText('Live, unknown')).toBeNull();
+    expect(screen.getByText('20.8 Mbps')).toBeInTheDocument();
   });
 });

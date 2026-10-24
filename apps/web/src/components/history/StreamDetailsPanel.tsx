@@ -22,6 +22,7 @@ import {
   type TranscodeInfo,
   type SubtitleInfo,
   type ServerType,
+  type MediaType,
 } from '@tracearr/shared';
 
 interface StreamDetailsPanelProps {
@@ -46,6 +47,8 @@ interface StreamDetailsPanelProps {
   bitrate: number | null;
   // Server type for conditional tooltip
   serverType: ServerType;
+  // Live TV has no file to take a source bitrate from, and Plex gives a transcode's cap
+  mediaType?: MediaType;
 }
 
 // Component for showing "N/A" with tooltip when stream bitrate is unavailable (Jellyfin/Emby only)
@@ -104,6 +107,34 @@ function LivePaceRow({ info }: { info: TranscodeInfo }) {
     </div>
   );
 }
+
+/**
+ * Plex reports a transcode's target as its bitrate: the most the player's quality setting allows
+ * (an Apple TV on Maximum: 20,121 kbps of video plus the audio), not what it really sends, which
+ * Plex doesn't report. A Live TV encode with a quality floor often runs far below it (5.8 Mbps
+ * measured against "20.8 Mbps"), so the number is shown as a maximum.
+ */
+function MaxBitrate({ kbps }: { kbps: number }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-help items-center gap-1" data-testid="max-bitrate">
+          max {formatBitrate(kbps)}
+          <Info className="h-3 w-3" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[250px]">
+        <p className="text-xs">
+          The most this transcode may use, set by the player&apos;s quality. Plex doesn&apos;t
+          report what it really sends; for Live TV that is often much lower.
+        </p>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** A live stream has no file, so no source bitrate unless the server measured one. */
+const LIVE_UNKNOWN_BITRATE = 'Live, unknown';
 
 // Format channels (e.g., 8 -> "7.1", 6 -> "5.1", 2 -> "Stereo")
 function formatChannels(channels: number | null | undefined): string {
@@ -275,6 +306,7 @@ export function StreamDetailsPanel({
   audioDecision,
   bitrate,
   serverType,
+  mediaType,
 }: StreamDetailsPanelProps) {
   const { t } = useTranslation();
   const [transcodeOpen, setTranscodeOpen] = useState(false);
@@ -303,6 +335,12 @@ export function StreamDetailsPanel({
     );
   }
 
+  const isLive = mediaType === 'live';
+  // A Plex Live TV video transcode's bitrates are its cap, not its rate (MaxBitrate).
+  const bitrateIsCap = isLive && serverType === 'plex' && videoDecision === 'transcode';
+  const liveBitrate = (kbps: number | null | undefined): string =>
+    !kbps && isLive ? LIVE_UNKNOWN_BITRATE : formatBitrate(kbps);
+
   const videoBadge = decisionBadge(videoDecision);
   const audioBadge = decisionBadge(audioDecision);
   const transcodeReasons = transcodeInfo?.reasons ?? [];
@@ -325,7 +363,9 @@ export function StreamDetailsPanel({
           {!!bitrate && (
             <div className="flex justify-between py-1 text-sm">
               <span className="text-muted-foreground">Bitrate</span>
-              <span className="font-medium">{formatBitrate(bitrate)}</span>
+              <span className="font-medium">
+                {bitrateIsCap ? <MaxBitrate kbps={bitrate} /> : formatBitrate(bitrate)}
+              </span>
             </div>
           )}
           <Separator />
@@ -364,15 +404,17 @@ export function StreamDetailsPanel({
               />
               <ComparisonRow
                 label="Bitrate"
-                sourceValue={formatBitrate(sourceVideoDetails?.bitrate)}
+                sourceValue={liveBitrate(sourceVideoDetails?.bitrate)}
                 streamValue={
                   // Show N/A with tooltip for Jellyfin/Emby transcodes without stream bitrate
                   videoDecision === 'transcode' &&
                   !streamVideoDetails?.bitrate &&
                   serverType !== 'plex' ? (
                     <UnavailableBitrate />
+                  ) : bitrateIsCap && streamVideoDetails?.bitrate ? (
+                    <MaxBitrate kbps={streamVideoDetails.bitrate} />
                   ) : (
-                    formatBitrate(streamVideoDetails?.bitrate ?? sourceVideoDetails?.bitrate)
+                    liveBitrate(streamVideoDetails?.bitrate ?? sourceVideoDetails?.bitrate)
                   )
                 }
               />
@@ -451,7 +493,7 @@ export function StreamDetailsPanel({
             />
             <ComparisonRow
               label="Bitrate"
-              sourceValue={formatBitrate(sourceAudioDetails?.bitrate)}
+              sourceValue={liveBitrate(sourceAudioDetails?.bitrate)}
               streamValue={
                 // Show N/A with tooltip for Jellyfin/Emby transcodes without stream bitrate
                 audioDecision === 'transcode' &&
@@ -459,7 +501,7 @@ export function StreamDetailsPanel({
                 serverType !== 'plex' ? (
                   <UnavailableBitrate />
                 ) : (
-                  formatBitrate(streamAudioDetails?.bitrate ?? sourceAudioDetails?.bitrate)
+                  liveBitrate(streamAudioDetails?.bitrate ?? sourceAudioDetails?.bitrate)
                 )
               }
             />

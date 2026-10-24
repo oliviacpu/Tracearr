@@ -645,6 +645,7 @@ function SessionContent({
             audioDecision={session.audioDecision ?? null}
             bitrate={session.bitrate ?? null}
             serverType={session.server.type}
+            mediaType={session.mediaType}
           />
         </Section>
       </div>

@@ -10,6 +10,7 @@ import {
   formatLocationCompact,
   getBufferedPercent,
   getDeviceDisplayName,
+  getLiveChannelLabel,
   getMediaDisplay,
   getMediaLinks,
 } from '@/lib/utils';
@@ -95,6 +96,13 @@ export function NowPlayingCard({ session, onClick }: NowPlayingCardProps) {
         POSTER_IMAGE_SIZE.height
       )
     : null;
+
+  // Live TV: the channel and its logo (a guide's logo goes through the image proxy too)
+  const channelLabel = getLiveChannelLabel(session);
+  const channelLogoUrl =
+    channelLabel && session.channelThumb
+      ? imageProxyUrl(session.serverId, session.channelThumb, 64, 64)
+      : null;
 
   // User avatar URL (proxied for Jellyfin/Emby)
   const avatarUrl = getAvatarUrl(session.serverId, session.user.thumbUrl, 28) ?? undefined;
@@ -231,10 +239,32 @@ export function NowPlayingCard({ session, onClick }: NowPlayingCardProps) {
               <h3 className="truncate text-sm leading-tight font-semibold">
                 <MediaPageLink to={mediaLinks.title}>{title}</MediaPageLink>
               </h3>
-              {subtitle && (
-                <p className="text-muted-foreground mt-0.5 truncate text-xs">
-                  <MediaPageLink to={mediaLinks.subtitle}>{subtitle}</MediaPageLink>
+              {channelLabel ? (
+                <p
+                  className="text-muted-foreground mt-0.5 flex min-w-0 items-center gap-1 text-xs"
+                  data-testid="live-channel"
+                >
+                  {channelLogoUrl && (
+                    <img
+                      src={channelLogoUrl}
+                      alt=""
+                      className="h-3.5 w-3.5 shrink-0 object-contain"
+                      loading="lazy"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                  )}
+                  <span className="truncate">
+                    {subtitle ? `${channelLabel} · ${subtitle}` : channelLabel}
+                  </span>
                 </p>
+              ) : (
+                subtitle && (
+                  <p className="text-muted-foreground mt-0.5 truncate text-xs">
+                    <MediaPageLink to={mediaLinks.subtitle}>{subtitle}</MediaPageLink>
+                  </p>
+                )
               )}
             </div>
 

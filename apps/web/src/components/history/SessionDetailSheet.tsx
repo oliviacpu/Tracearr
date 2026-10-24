@@ -41,6 +41,7 @@ import {
 import {
   cn,
   getCountryName,
+  getLiveChannelLabel,
   getMediaDisplay,
   getMediaLinks,
   getSessionProgress,
@@ -260,6 +261,13 @@ function SessionContent({
       )
     : null;
 
+  // Live TV: the channel and its logo (a guide's logo goes through the image proxy too)
+  const channelLabel = getLiveChannelLabel(session);
+  const channelLogoUrl =
+    channelLabel && session.channelThumb
+      ? imageProxyUrl(session.serverId, session.channelThumb, 64, 64)
+      : null;
+
   const locationParts = [session.geoCity, session.geoRegion, geoCountryName].filter(Boolean);
   const locationString = locationParts.join(', ');
   const transcodeReasons = session.transcodeInfo?.reasons ?? [];
@@ -304,6 +312,22 @@ function SessionContent({
             <div className="text-muted-foreground mb-1 flex items-center gap-1.5 text-xs">
               <MediaIcon className="h-3 w-3" />
               {mediaConfig.label}
+              {channelLabel && (
+                <span className="flex min-w-0 items-center gap-1" data-testid="live-channel">
+                  ·
+                  {channelLogoUrl && (
+                    <img
+                      src={channelLogoUrl}
+                      alt=""
+                      className="h-3.5 w-3.5 shrink-0 object-contain"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                  )}
+                  <span className="truncate">{channelLabel}</span>
+                </span>
+              )}
               {session.year && <span>· {session.year}</span>}
             </div>
             <div className="flex items-center gap-1.5 leading-tight font-medium">

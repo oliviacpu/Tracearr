@@ -119,3 +119,39 @@ describe('NowPlayingCard title links', () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('NowPlayingCard Live TV channel', () => {
+  const live = {
+    mediaType: 'live',
+    mediaTitle: 'Janet(s)',
+    channelTitle: 'Sitcoms',
+    channelIdentifier: '3',
+    channelThumb: 'https://guide.example.com/images/uploads/sitcoms_icon.png?v=1',
+  } as const;
+
+  it('names the channel under the programme, with its logo through the image proxy', () => {
+    renderCard(live);
+    const line = screen.getByTestId('live-channel');
+    expect(line).toHaveTextContent('Channel 3 · Sitcoms');
+    const logo = line.querySelector('img');
+    expect(logo?.getAttribute('src')).toContain('/api/v1/images/proxy?');
+    expect(logo?.getAttribute('src')).toContain(
+      encodeURIComponent('https://guide.example.com/images/uploads/sitcoms_icon.png?v=1')
+    );
+  });
+
+  it('has no logo when the guide gave none', () => {
+    renderCard({ ...live, channelThumb: null });
+    expect(screen.getByTestId('live-channel').querySelector('img')).toBeNull();
+  });
+
+  it('shows no channel line for Live TV without a channel', () => {
+    renderCard({ ...live, channelTitle: null, channelIdentifier: null });
+    expect(screen.queryByTestId('live-channel')).toBeNull();
+  });
+
+  it('shows no channel line for other media, whatever they carry', () => {
+    renderCard({ ...live, mediaType: 'episode' });
+    expect(screen.queryByTestId('live-channel')).toBeNull();
+  });
+});

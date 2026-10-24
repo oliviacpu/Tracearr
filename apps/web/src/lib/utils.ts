@@ -128,6 +128,28 @@ export function getMediaLinks(
   return { title: path(media.mediaId), subtitle: null };
 }
 
+/** A channel number a viewer would recognise ("5", "5.1"), not a guide key ("C3.51.tunarr.com"). */
+const CHANNEL_NUMBER = /^\d{1,5}([.-]\d{1,3})?$/;
+
+/**
+ * The channel a Live TV session is on, as one line: "Channel 3 · Sitcoms", the name alone, or
+ * "Channel 3". Null for other media and when the server named no channel.
+ */
+export function getLiveChannelLabel(session: {
+  mediaType: string | null;
+  channelTitle?: string | null;
+  channelIdentifier?: string | null;
+}): string | null {
+  if (session.mediaType !== 'live') return null;
+  const id = session.channelIdentifier;
+  const number = id && CHANNEL_NUMBER.test(id) ? id : null;
+  const name =
+    session.channelTitle && session.channelTitle !== number ? session.channelTitle : null;
+  if (number && name) return `Channel ${number} · ${name}`;
+  if (name) return name;
+  return number ? `Channel ${number}` : null;
+}
+
 /**
  * What a client calls itself, else the app and hardware it reports. Null when
  * the server sent nothing identifying, so callers pick their own fallback.

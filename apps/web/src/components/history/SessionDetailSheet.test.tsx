@@ -120,4 +120,19 @@ describe('SessionDetailSheet', () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  it("names a Live TV session's channel next to its media type", () => {
+    renderSheet({
+      server: { id: 'server-1', name: 'Basement', type: 'plex' },
+      mediaType: 'live',
+      mediaTitle: 'Janet(s)',
+      channelTitle: 'Sitcoms',
+      channelIdentifier: '3',
+      channelThumb: 'https://guide.example.com/images/uploads/sitcoms_icon.png?v=1',
+    } as Partial<SessionWithDetails>);
+
+    const channel = screen.getByTestId('live-channel');
+    expect(channel).toHaveTextContent('Channel 3 · Sitcoms');
+    expect(channel.querySelector('img')?.getAttribute('src')).toContain('/api/v1/images/proxy?');
+  });
 });

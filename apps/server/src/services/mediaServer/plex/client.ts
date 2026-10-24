@@ -46,6 +46,7 @@ import {
   type PlexBandwidthStats,
   type PlexOriginalMedia,
 } from './parser.js';
+import { isGuideId, parseGuideGrid, parseLiveTvGuideIds, type PlexGuideAiring } from './guide.js';
 
 const PLEX_TV_BASE = 'https://plex.tv';
 
@@ -183,6 +184,44 @@ export class PlexClient implements IMediaServerClient, IMediaServerClientWithHis
     );
     const version = data.MediaContainer?.version;
     return typeof version === 'string' && version ? version : null;
+  }
+
+  /**
+   * The guide providers of the server's Live TV DVRs (`epgIdentifier`), none when it has
+   * no DVR. Throws when the server can't be asked.
+   */
+  async getLiveTvGuideIds(timeout = 5000): Promise<string[]> {
+    const data = await fetchJson<unknown>(`${this.baseUrl}/livetv/dvrs`, {
+      headers: this.buildHeaders(),
+      service: 'plex',
+      timeout,
+    });
+    return parseLiveTvGuideIds(data);
+  }
+
+  /**
+   * The airings a Live TV guide lists between `from` and `to` (epoch ms): every programme
+   * on the air at some point of that span, or with `startingBetween` only those that begin
+   * in it. `channelId` keeps one channel (the guide's own id, Media.channelID).
+   */
+  async getGuideAirings(
+    guideId: string,
+    query: { from: number; to: number; channelId?: string; startingBetween?: boolean },
+    timeout = 5000
+  ): Promise<PlexGuideAiring[]> {
+    if (!isGuideId(guideId)) return [];
+    const from = Math.floor(query.from / 1000);
+    const to = Math.ceil(query.to / 1000);
+    const window = query.startingBetween
+      ? `beginsAt%3E=${from}&beginsAt%3C=${to}`
+      : `beginsAt%3C=${to}&endsAt%3E=${from}`;
+    const channel = query.channelId ? `&channel=${encodeURIComponent(query.channelId)}` : '';
+    const data = await fetchJson<unknown>(`${this.baseUrl}/${guideId}/grid?${window}${channel}`, {
+      headers: this.buildHeaders(),
+      service: 'plex',
+      timeout,
+    });
+    return parseGuideGrid(data);
   }
 
   /**

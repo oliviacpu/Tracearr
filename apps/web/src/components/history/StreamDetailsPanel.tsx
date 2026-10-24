@@ -72,9 +72,10 @@ function UnavailableBitrate() {
 }
 
 /**
- * A Live TV transcode's speed as whether it keeps up with the live source, measured from how
- * fast the transcoder's ready point grows, instead of Plex's instantaneous speed (which jumps
- * between 4.5x and 0.7x within seconds and sits below 1x whenever it waits for input).
+ * A Live TV transcode's speed as "Ahead" (it keeps up with the live source) or "Lagging" (it
+ * falls behind), measured from how fast the transcoder's ready point grows, instead of Plex's
+ * instantaneous speed (which jumps between 4.5x and 0.7x within seconds and sits below 1x
+ * whenever it waits for input).
  */
 function LivePaceRow({ info }: { info: TranscodeInfo }) {
   const behind = info.livePace === 'falling_behind';
@@ -96,7 +97,7 @@ function LivePaceRow({ info }: { info: TranscodeInfo }) {
           <span
             className={cn('inline-flex cursor-help items-center gap-1', behind && 'text-amber-500')}
           >
-            {behind ? 'Falling behind' : 'Keeping up'}
+            {behind ? 'Lagging' : 'Ahead'}
             <Info className="h-3 w-3" />
           </span>
         </TooltipTrigger>

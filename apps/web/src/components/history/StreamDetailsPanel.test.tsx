@@ -45,24 +45,24 @@ function openTranscodeDetails() {
 }
 
 describe('StreamDetailsPanel Live TV speed', () => {
-  it('says the transcode keeps up instead of showing Plex’s instantaneous speed', () => {
+  it('says the transcode is ahead instead of showing Plex’s instantaneous speed', () => {
     renderPanel({
       transcodeInfo: { speed: 0.8, livePace: 'keeping_up', livePaceRate: 0.98 },
     });
     openTranscodeDetails();
 
-    expect(screen.getByTestId('live-pace')).toHaveTextContent('Keeping up');
+    expect(screen.getByTestId('live-pace')).toHaveTextContent('Ahead');
     expect(screen.queryByText('0.8x')).not.toBeInTheDocument();
   });
 
-  it('marks a transcode that falls behind', () => {
+  it('marks a transcode that lags', () => {
     renderPanel({
       transcodeInfo: { speed: 0.7, livePace: 'falling_behind', livePaceRate: 0.7 },
     });
     openTranscodeDetails();
 
     const row = screen.getByTestId('live-pace');
-    expect(row).toHaveTextContent('Falling behind');
+    expect(row).toHaveTextContent('Lagging');
     expect(row.querySelector('.text-amber-500')).not.toBeNull();
   });
 

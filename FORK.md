@@ -140,3 +140,37 @@ instead (`liveTvWatch.ts`, used by `notificationQueue.ts`).
   messages, and the Live TV Stream Ended can then arrive after the movie's Stream Started.
 - It applies to every destination type and to automation sends: a Stream Ended automation sees the watch's summed
   `durationMs` and first `startedAt`.
+
+### Discord stream cards for an episode, a movie and a Live TV channel
+
+A Discord stream message was the same block of fields for everything (User, Media, Episode or Year, Playback,
+Location, Player), so a film, an episode and a Live TV channel looked alike, and a Live TV message couldn't say which
+channel: Plex's Live TV session from an XMLTV guide (Tunarr) carries no `sourceTitle` and no channel fields on its
+Media, which is why `channelTitle`, `channelIdentifier` and `channelThumb` stay empty for those sessions.
+
+- Stream started and stream ended embeds in Discord are now a card per kind. The author line names the viewer ("Sam
+  is watching", "tuned in" for Live TV, "stopped watching" or "tuned out" when it ends), with their picture under the
+  same rules as before; without an allowed picture the name stays and only the picture is left off. A TV episode
+  (blue) is titled with its show, with "S4 E17 · Best Men" under it. A movie (gold) is titled with its name and year,
+  with its genres (up to three, from the library sync) and runtime when Tracearr has them. A Live TV channel (red) is
+  titled "Channel 5 · Sitcoms", with "Now: Modern Family · S4 E17 Best Men", "Next: Abbott Elementary at 3:30 PM" (in
+  the `TZ` Tracearr runs in) and the channel's logo. A started card ends with one line: player, playback and the
+  viewer's city (left out when the location rules leave it out). An ended card is grey, keeps its title and says how
+  long it was watched. An automation's own title or body still replaces the card's. Music and every other kind keep
+  the field layout. Other destinations are unchanged (`discord.ts`).
+- The channel comes from the Plex server's Live TV guide, through Tracearr's own connection to that server: each
+  DVR's guide provider (`/livetv/dvrs`, `epgIdentifier`) has a grid of airings with their channel (`channelVcn`,
+  `channelCallSign`, `channelTitle`, `channelThumb`, `channelID`) and time slot. The programme the session plays is
+  matched on its show, season and episode (a film on its title) among the airings on the air when the session started,
+  or just before it stopped, and the next airing on the same channel is asked for by the grid's `channel=` filter
+  (`plex/guide.ts`, `PlexClient.getLiveTvGuideIds` and `getGuideAirings`, `liveTvGuide.ts`).
+- Lookups are cached: the guide list for 10 minutes, a grid per server and minute and a channel's next programme for
+  10 minutes, so every destination and session in that minute shares one request; concurrent lookups share one too.
+  Each request has a 4-second timeout and the whole lookup 5 seconds. When the server isn't Plex, has no DVR, fails,
+  is slow, or airs the programme on two channels at that moment, the card has no channel: it is titled with the show,
+  says "Live TV" and has no Next line. A failure is logged at most every 5 minutes. A session that names its channel
+  itself (Jellyfin, Emby, a Plex guide that sets `sourceTitle`) shows that channel.
+- The logo is fetched like the posters, through the image proxy (a guide's outside URL only from an origin in
+  `EXTERNAL_IMAGE_ORIGINS`, by the Plex server's photo transcoder) and uploaded with the message; when it can't be
+  fetched, the session's poster (for an XMLTV episode, the show's) is used. No server URL or token reaches Discord.
+- The held Live TV stop (`liveTvWatch.ts`) is unchanged: the ended card looks up the programme the watch ended on.

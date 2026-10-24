@@ -1,6 +1,7 @@
 import {
   DESTINATION_TEXT_PROFILES,
   DESTINATION_TYPES,
+  escapeDiscordMarkdown,
   escapeFor,
   fitText,
   isPlacedLocal,
@@ -8,6 +9,9 @@ import {
   POSTER_IMAGE_SIZE,
 } from '@tracearr/shared';
 import { proxyImage } from '../../imageProxy.js';
+import { liveTvGuide, type LiveTvAiring } from '../../liveTvGuide.js';
+import type { PlexGuideAiring } from '../../mediaServer/plex/guide.js';
+import { itemGenres } from '../itemGenres.js';
 import { mediaHeadline, mediaSubtitle, qualityMoves } from '../formatters/media.js';
 import { formatPluginUpdateMessage } from '../formatters/pluginUpdate.js';
 import { formatServerUpdateMessage, formatTracearrUpdateMessage } from '../formatters/updates.js';
@@ -128,6 +132,12 @@ export function publicPictureUrl(value: string | null | undefined): string | nul
     if (SECRET_PARAM.test(name)) return null;
   }
   return value;
+}
+
+/** The author line of a stream card: it always names the viewer, with their picture when allowed. */
+function viewerLine(text: string, thumbUrl: string | null | undefined): DiscordEmbed['author'] {
+  const icon = publicPictureUrl(thumbUrl);
+  return icon ? { name: text, icon_url: icon } : { name: text };
 }
 
 /** The viewer as the embed's author, with their picture when it is one Discord may fetch. */
@@ -292,6 +302,251 @@ function buildSessionStoppedEmbed(payload: NotificationPayload, ctx: SessionCont
     color: 0x95a5a6, // Gray
     fields,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Stream cards: a TV episode, a movie and a Live TV channel each get their own
+// card. Other media (music, clips, photos) keep the field layout above.
+// ---------------------------------------------------------------------------
+
+type StreamKind = 'episode' | 'movie' | 'live';
+
+function streamKind(session: SessionContext['session']): StreamKind | null {
+  switch (session.mediaType) {
+    case 'episode':
+    case 'movie':
+    case 'live':
+      return session.mediaType;
+    default:
+      return null;
+  }
+}
+
+const STREAM_COLORS: Record<StreamKind, number> = {
+  episode: 0x3498db, // Blue
+  movie: 0xf1c40f, // Gold
+  live: 0xe74c3c, // Red
+};
+const STREAM_ENDED_COLOR = 0x95a5a6; // Gray
+
+/** What a card needs beyond the session: Live TV's channel from the guide, a movie's genres. */
+interface StreamExtras {
+  airing?: LiveTvAiring | null;
+  genres?: string[];
+}
+
+/** "S4 E17", unpadded as a guide or a TV shows it; null without both numbers. */
+function seasonEpisode(season: number | null, episode: number | null): string | null {
+  return season === null || episode === null ? null : `S${season} E${episode}`;
+}
+
+/** A runtime as "1h 33m", "45m" or "2h". */
+export function formatRuntime(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${rest}m`;
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+}
+
+/** A start time as "3:30 PM" in Tracearr's time zone (TZ), the one its schedules use. */
+export function formatClock(epochMs: number): string {
+  const options: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
+  let text: string;
+  try {
+    text = new Intl.DateTimeFormat('en-US', {
+      ...options,
+      timeZone: process.env.TZ || undefined,
+    }).format(epochMs);
+  } catch {
+    // An unknown TZ name: the process's own zone.
+    text = new Intl.DateTimeFormat('en-US', options).format(epochMs);
+  }
+  return text.replace(/\s/g, ' ');
+}
+
+/**
+ * Where the viewer is, for the one-line summary: the city, or the existing rules' answer
+ * when they place a local session ("Chicago (Local Network)"); nothing when they show none.
+ */
+function compactLocation(session: SessionContext['session']): string | null {
+  if (isPlacedLocal({ isLocal: session.isLocal, country: session.geoCountry })) {
+    const place = session.geoCity || session.geoCountry;
+    return place ? `${place} (${LOCAL_NETWORK_COUNTRY})` : LOCAL_NETWORK_COUNTRY;
+  }
+  return session.geoCity && session.geoCountry ? session.geoCity : null;
+}
+
+/** "Plex for Apple TV · Direct Play · Bentonville". */
+function watchLine(session: SessionContext['session']): string {
+  return [
+    session.product || session.playerName || 'Unknown',
+    getPlaybackType(session),
+    compactLocation(session),
+  ]
+    .filter((part): part is string => !!part)
+    .map(escapeDiscordMarkdown)
+    .join(' · ');
+}
+
+/** "S4 E17 · Best Men", or the title alone. */
+function episodeLine(session: SessionContext['session']): string {
+  const label = seasonEpisode(session.seasonNumber, session.episodeNumber);
+  const title = escapeDiscordMarkdown(session.mediaTitle);
+  return label ? `${label} · ${title}` : title;
+}
+
+/** The programme in one line: "Modern Family · S4 E17 Best Men", or "Little Big Man (1970)". */
+function programmeLine(session: SessionContext['session']): string {
+  if (session.grandparentTitle) {
+    const label = seasonEpisode(session.seasonNumber, session.episodeNumber);
+    const episode = [label, escapeDiscordMarkdown(session.mediaTitle)]
+      .filter((part): part is string => !!part)
+      .join(' ');
+    return `${escapeDiscordMarkdown(session.grandparentTitle)} · ${episode}`;
+  }
+  return escapeDiscordMarkdown(
+    session.year ? `${session.mediaTitle} (${session.year})` : session.mediaTitle
+  );
+}
+
+function nextLine(next: PlexGuideAiring): string {
+  return `Next: ${escapeDiscordMarkdown(next.showTitle ?? next.title)} at ${formatClock(next.beginsAt)}`;
+}
+
+interface CardChannel {
+  number: string | null;
+  name: string | null;
+  thumb: string | null;
+}
+
+/** A channel number a viewer would recognise ("5", "5.1"), not an internal key. */
+const CHANNEL_NUMBER = /^\d{1,5}([.-]\d{1,3})?$/;
+
+/**
+ * The session's channel: the guide's when it found one, else what the session itself
+ * carries (Jellyfin and Emby name it, and Plex for some guides).
+ */
+function cardChannel(
+  session: SessionContext['session'],
+  airing: LiveTvAiring | null | undefined
+): CardChannel | null {
+  if (airing) {
+    const { number, title, callSign, thumb } = airing.channel;
+    const titleName =
+      title && number && title.startsWith(`${number} `) ? title.slice(number.length + 1) : title;
+    const name = callSign || titleName;
+    return { number, name: name === number ? null : name, thumb };
+  }
+  if (!session.channelTitle) return null;
+  const number =
+    session.channelIdentifier && CHANNEL_NUMBER.test(session.channelIdentifier)
+      ? session.channelIdentifier
+      : null;
+  return { number, name: session.channelTitle, thumb: null };
+}
+
+function channelHeading(channel: CardChannel | null): string | null {
+  if (!channel) return null;
+  if (channel.number && channel.name) return `Channel ${channel.number} · ${channel.name}`;
+  if (channel.name) return channel.name;
+  return channel.number ? `Channel ${channel.number}` : null;
+}
+
+/**
+ * A stream's card. Started: who is watching, the show or film or channel as the title, what
+ * it is underneath, and the player, playback and place in one line. Ended: the same title
+ * and the watch time. An automation's own title or body still wins.
+ */
+function buildStreamCard(
+  payload: NotificationPayload,
+  ctx: SessionContext,
+  kind: StreamKind,
+  extras: StreamExtras
+): DiscordEmbed {
+  const { session } = ctx;
+  const started = ctx.type === 'stream_started';
+  const viewer = getUserDisplayName(session);
+  const lines: string[] = [];
+  let title: string;
+  let author: string;
+
+  switch (kind) {
+    case 'episode':
+      author = started ? `${viewer} is watching` : `${viewer} stopped watching`;
+      title = session.grandparentTitle || session.mediaTitle;
+      lines.push(session.grandparentTitle ? episodeLine(session) : '');
+      break;
+    case 'movie': {
+      author = started ? `${viewer} is watching` : `${viewer} stopped watching`;
+      title = session.year ? `${session.mediaTitle} (${session.year})` : session.mediaTitle;
+      const about = [
+        ...(extras.genres ?? []).slice(0, 3),
+        ...(session.totalDurationMs ? [formatRuntime(session.totalDurationMs)] : []),
+      ];
+      lines.push(about.map(escapeDiscordMarkdown).join(' · '));
+      break;
+    }
+    case 'live': {
+      author = started ? `${viewer} tuned in` : `${viewer} tuned out`;
+      const heading = channelHeading(cardChannel(session, extras.airing));
+      if (heading) {
+        title = heading;
+        lines.push(`${started ? 'Now' : 'Was on'}: ${programmeLine(session)}`);
+        const next = extras.airing?.next;
+        if (started && next) lines.push(nextLine(next));
+      } else {
+        title = session.grandparentTitle || session.mediaTitle;
+        const what = session.grandparentTitle
+          ? episodeLine(session)
+          : session.year
+            ? String(session.year)
+            : null;
+        lines.push(what ? `Live TV · ${what}` : 'Live TV');
+      }
+      break;
+    }
+  }
+
+  if (started) {
+    lines.push(watchLine(session));
+  } else if (session.durationMs) {
+    lines.push(`Watched for ${formatDuration(session.durationMs)}`);
+  }
+
+  const text = textOf(payload, {
+    title,
+    message: lines.filter((line) => line !== '').join('\n'),
+  });
+
+  return {
+    author: viewerLine(author, session.user.thumbUrl),
+    title: text.title,
+    ...(text.message && { description: text.message }),
+    color: started ? STREAM_COLORS[kind] : STREAM_ENDED_COLOR,
+  };
+}
+
+/** The moment to find a Live TV programme in the guide: when it started, or just before it stopped. */
+function liveLookupTime(ctx: SessionContext): Date {
+  const { session } = ctx;
+  if (ctx.type === 'stream_started') return new Date(session.startedAt);
+  const stopped = session.stoppedAt ? new Date(session.stoppedAt).getTime() : Date.now();
+  return new Date(stopped - 60_000);
+}
+
+async function streamExtras(ctx: SessionContext, kind: StreamKind): Promise<StreamExtras> {
+  const { session } = ctx;
+  if (kind === 'movie') {
+    return { genres: await itemGenres(session.serverId, session.ratingKey, session.mediaId) };
+  }
+  if (kind === 'live' && session.server.type === 'plex') {
+    const airing = await liveTvGuide
+      .findAiring(session, liveLookupTime(ctx), { next: ctx.type === 'stream_started' })
+      .catch(() => null);
+    return { airing };
+  }
+  return {};
 }
 
 function buildServerDownEmbed(payload: NotificationPayload, ctx: ServerContext): DiscordEmbed {
@@ -484,8 +739,20 @@ async function buildSessionMessage(
   payload: NotificationPayload,
   ctx: SessionContext
 ): Promise<DiscordMessage> {
-  const poster = await fetchPoster(ctx.session.serverId, ctx.session.thumbPath);
-  return withPoster(buildEmbed(payload), poster);
+  const { session } = ctx;
+  const kind = streamKind(session);
+  if (kind === null) {
+    const poster = await fetchPoster(session.serverId, session.thumbPath);
+    return withPoster(buildEmbed(payload), poster);
+  }
+
+  const extras = await streamExtras(ctx, kind);
+  // A Live TV channel shows its logo from the guide; without one, the session's own picture.
+  const logo = extras.airing?.channel.thumb ?? null;
+  const poster =
+    (logo !== null ? await fetchPoster(session.serverId, logo) : undefined) ??
+    (await fetchPoster(session.serverId, session.thumbPath));
+  return withPoster(buildStreamCard(payload, ctx, kind, extras), poster);
 }
 
 function withPoster(

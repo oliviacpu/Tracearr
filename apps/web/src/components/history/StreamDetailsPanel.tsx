@@ -68,6 +68,43 @@ function UnavailableBitrate() {
   );
 }
 
+/**
+ * A Live TV transcode's speed as whether it keeps up with the live source, measured from how
+ * fast the transcoder's ready point grows, instead of Plex's instantaneous speed (which jumps
+ * between 4.5x and 0.7x within seconds and sits below 1x whenever it waits for input).
+ */
+function LivePaceRow({ info }: { info: TranscodeInfo }) {
+  const behind = info.livePace === 'falling_behind';
+  const detail = [
+    info.throttled
+      ? 'Plex is holding the transcoder back because it is ahead of the player.'
+      : info.livePaceRate !== undefined
+        ? `Over the last minute the transcoder readied ${info.livePaceRate.toFixed(2)} s of stream per second (1.00 is real time).`
+        : 'Measured from how fast the transcoder readies the live stream.',
+    info.speed !== undefined ? `Plex's instantaneous speed: ${info.speed.toFixed(1)}x.` : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <div className="flex justify-between" data-testid="live-pace">
+      <span className="text-muted-foreground">Speed</span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn('inline-flex cursor-help items-center gap-1', behind && 'text-amber-500')}
+          >
+            {behind ? 'Falling behind' : 'Keeping up'}
+            <Info className="h-3 w-3" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-[250px]">
+          <p className="text-xs">{detail}</p>
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 // Format channels (e.g., 8 -> "7.1", 6 -> "5.1", 2 -> "Stereo")
 function formatChannels(channels: number | null | undefined): string {
   if (!channels) return '—';
@@ -251,7 +288,11 @@ export function StreamDetailsPanel({
   const hasAudioDetails = sourceAudioCodec || streamAudioCodec || sourceAudioChannels;
   const hasSubtitleDetails = subtitleInfo?.codec || subtitleInfo?.language;
   const hasTranscodeDetails =
-    transcodeInfo && (transcodeInfo.hwDecoding || transcodeInfo.hwEncoding || transcodeInfo.speed);
+    transcodeInfo &&
+    (transcodeInfo.hwDecoding ||
+      transcodeInfo.hwEncoding ||
+      transcodeInfo.speed ||
+      transcodeInfo.livePace);
 
   // If no details at all, show a simple message
   if (!hasVideoDetails && !hasAudioDetails) {
@@ -509,13 +550,17 @@ export function StreamDetailsPanel({
                   <span>{transcodeInfo.hwEncoding}</span>
                 </div>
               )}
-              {transcodeInfo?.speed !== undefined && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Speed</span>
-                  <span className={cn(transcodeInfo.speed < 1 && 'text-amber-500')}>
-                    {transcodeInfo.speed.toFixed(1)}x{transcodeInfo.throttled && ' (throttled)'}
-                  </span>
-                </div>
+              {transcodeInfo?.livePace ? (
+                <LivePaceRow info={transcodeInfo} />
+              ) : (
+                transcodeInfo?.speed !== undefined && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Speed</span>
+                    <span className={cn(transcodeInfo.speed < 1 && 'text-amber-500')}>
+                      {transcodeInfo.speed.toFixed(1)}x{transcodeInfo.throttled && ' (throttled)'}
+                    </span>
+                  </div>
+                )
               )}
             </div>
           </CollapsibleContent>

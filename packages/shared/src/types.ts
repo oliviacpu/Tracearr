@@ -386,7 +386,18 @@ export interface TranscodeInfo {
   /** Seconds from the file start that the transcoder has ready (Plex only; Jellyfin sends none) */
   maxOffsetAvailable?: number;
   reasons?: string[];
+  /**
+   * Plex Live TV (fork): whether the transcoder keeps up with the live source, measured from
+   * how fast maxOffsetAvailable grows over the last minute rather than Plex's instantaneous
+   * speed. Absent until there is enough to measure, and while paused.
+   */
+  livePace?: LivePace;
+  /** Seconds of stream readied per second over that span (1 = real time); absent when throttled */
+  livePaceRate?: number;
 }
+
+/** Whether a Live TV transcode keeps up with its live source. */
+export type LivePace = 'keeping_up' | 'falling_behind';
 
 /** Subtitle stream information */
 export interface SubtitleInfo {

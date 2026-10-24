@@ -40,6 +40,7 @@ export type {
   StreamVideoDetails,
   StreamAudioDetails,
   TranscodeInfo,
+  LivePace,
   SubtitleInfo,
   StreamDetailFields,
   // V1 rule params, still read by the automation migration

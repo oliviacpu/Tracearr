@@ -87,7 +87,9 @@ export function getMediaDisplay(media: MediaDisplayFields): {
   title: string;
   subtitle: string | null;
 } {
-  if (media.mediaType === 'episode' && media.grandparentTitle) {
+  // A Live TV programme that carries its show (an XMLTV guide episode, e.g. from Tunarr) reads
+  // like an episode too, as it does in notifications.
+  if ((media.mediaType === 'episode' || media.mediaType === 'live') && media.grandparentTitle) {
     // TV Show episode
     const episodeInfo =
       formatEpisodeLabel(media.seasonNumber, media.episodeNumber, {
@@ -122,7 +124,7 @@ export function getMediaLinks(
   media: MediaDisplayFields & { mediaId?: string | null; showMediaId?: string | null }
 ): { title: string | null; subtitle: string | null } {
   const path = (id: string | null | undefined) => (id ? `/media/${id}` : null);
-  if (media.mediaType === 'episode' && media.grandparentTitle) {
+  if ((media.mediaType === 'episode' || media.mediaType === 'live') && media.grandparentTitle) {
     return { title: path(media.showMediaId), subtitle: path(media.mediaId) };
   }
   return { title: path(media.mediaId), subtitle: null };

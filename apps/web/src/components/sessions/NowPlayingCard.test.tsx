@@ -140,6 +140,24 @@ describe('NowPlayingCard Live TV channel', () => {
     );
   });
 
+  it('reads a Live TV episode like an episode, with the channel under it', () => {
+    renderCard({
+      ...live,
+      grandparentTitle: 'The Good Place',
+      seasonNumber: 3,
+      episodeNumber: 10,
+    });
+
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('The Good Place');
+    expect(screen.getByText('S03 E10 · Janet(s)')).toBeInTheDocument();
+    expect(screen.getByTestId('live-channel')).toHaveTextContent('Channel 3 · Sitcoms');
+  });
+
+  it('keeps a Live TV programme without a show as its title', () => {
+    renderCard(live);
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Janet(s)');
+  });
+
   it('has no logo when the guide gave none', () => {
     renderCard({ ...live, channelThumb: null });
     expect(screen.getByTestId('live-channel').querySelector('img')).toBeNull();

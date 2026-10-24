@@ -135,4 +135,21 @@ describe('SessionDetailSheet', () => {
     expect(channel).toHaveTextContent('Channel 3 · Sitcoms');
     expect(channel.querySelector('img')?.getAttribute('src')).toContain('/api/v1/images/proxy?');
   });
+
+  it('reads a Live TV episode like an episode', () => {
+    renderSheet({
+      server: { id: 'server-1', name: 'Basement', type: 'plex' },
+      mediaType: 'live',
+      mediaTitle: 'Janet(s)',
+      grandparentTitle: 'The Good Place',
+      seasonNumber: 3,
+      episodeNumber: 10,
+      channelTitle: 'Sitcoms',
+      channelIdentifier: '3',
+    } as Partial<SessionWithDetails>);
+
+    expect(screen.getByText('The Good Place')).toBeInTheDocument();
+    expect(screen.getByText('S03 E10 · Janet(s)')).toBeInTheDocument();
+    expect(screen.getByTestId('live-channel')).toHaveTextContent('Channel 3 · Sitcoms');
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getDeviceDisplayName, getLiveChannelLabel, getMediaLinks } from './utils';
+import { getDeviceDisplayName, getLiveChannelLabel, getMediaDisplay, getMediaLinks } from './utils';
 
 describe('getDeviceDisplayName', () => {
   it('prefers the name the client gave itself', () => {
@@ -86,5 +86,39 @@ describe('getLiveChannelLabel', () => {
   it('is null without a channel and for anything but Live TV', () => {
     expect(getLiveChannelLabel({ mediaType: 'live', channelTitle: null })).toBeNull();
     expect(getLiveChannelLabel({ ...live, mediaType: 'episode' })).toBeNull();
+  });
+});
+
+describe('getMediaDisplay for Live TV', () => {
+  const programme = {
+    mediaType: 'live',
+    mediaTitle: 'Janet(s)',
+    grandparentTitle: 'The Good Place',
+    seasonNumber: 3,
+    episodeNumber: 10,
+  };
+
+  it('reads a Live TV episode like an episode: the show, then its number and title', () => {
+    expect(getMediaDisplay(programme)).toEqual({
+      title: 'The Good Place',
+      subtitle: 'S03 E10 · Janet(s)',
+    });
+    expect(getMediaDisplay({ ...programme, seasonNumber: null })).toEqual({
+      title: 'The Good Place',
+      subtitle: 'Janet(s)',
+    });
+  });
+
+  it('keeps a Live TV programme without a show as its own title', () => {
+    expect(
+      getMediaDisplay({ mediaType: 'live', mediaTitle: 'Coherence', grandparentTitle: null })
+    ).toEqual({ title: 'Coherence', subtitle: null });
+  });
+
+  it('links a Live TV episode like an episode', () => {
+    expect(getMediaLinks({ ...programme, mediaId: null, showMediaId: null })).toEqual({
+      title: null,
+      subtitle: null,
+    });
   });
 });

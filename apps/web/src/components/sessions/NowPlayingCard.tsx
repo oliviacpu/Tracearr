@@ -239,7 +239,12 @@ export function NowPlayingCard({ session, onClick }: NowPlayingCardProps) {
               <h3 className="truncate text-sm leading-tight font-semibold">
                 <MediaPageLink to={mediaLinks.title}>{title}</MediaPageLink>
               </h3>
-              {channelLabel ? (
+              {subtitle && (
+                <p className="text-muted-foreground mt-0.5 truncate text-xs">
+                  <MediaPageLink to={mediaLinks.subtitle}>{subtitle}</MediaPageLink>
+                </p>
+              )}
+              {channelLabel && (
                 <p
                   className="text-muted-foreground mt-0.5 flex min-w-0 items-center gap-1 text-xs"
                   data-testid="live-channel"
@@ -255,16 +260,8 @@ export function NowPlayingCard({ session, onClick }: NowPlayingCardProps) {
                       }}
                     />
                   )}
-                  <span className="truncate">
-                    {subtitle ? `${channelLabel} · ${subtitle}` : channelLabel}
-                  </span>
+                  <span className="truncate">{channelLabel}</span>
                 </p>
-              ) : (
-                subtitle && (
-                  <p className="text-muted-foreground mt-0.5 truncate text-xs">
-                    <MediaPageLink to={mediaLinks.subtitle}>{subtitle}</MediaPageLink>
-                  </p>
-                )
               )}
             </div>
 

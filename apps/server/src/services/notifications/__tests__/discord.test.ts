@@ -6,18 +6,36 @@ vi.mock('../../imageProxy.js', () => ({
   proxyImage: (...args: unknown[]) => mockProxyImage(...args) as unknown,
 }));
 
+const mockFindAiring = vi.fn();
+vi.mock('../../liveTvGuide.js', () => ({
+  liveTvGuide: { findAiring: (...args: unknown[]) => mockFindAiring(...args) as unknown },
+}));
+
+const mockItemGenres = vi.fn();
+vi.mock('../itemGenres.js', () => ({
+  itemGenres: (...args: unknown[]) => mockItemGenres(...args) as unknown,
+}));
+
 const mockBuildMediaLinks = vi.fn();
 vi.mock('../mediaLinks.js', () => ({
   buildMediaLinks: (...args: unknown[]) => mockBuildMediaLinks(...args) as unknown,
 }));
 
 import { createMockActiveSession } from '../../../test/fixtures.js';
-import { discordType, fitEmbed, type DiscordEmbed } from '../destinations/discord.js';
+import {
+  discordType,
+  fitEmbed,
+  formatClock,
+  formatRuntime,
+  type DiscordEmbed,
+} from '../destinations/discord.js';
 import type { NotificationEvent } from '../events.js';
 import type { RenderContext } from '../destinations/types.js';
 
 mockProxyImage.mockResolvedValue({ data: Buffer.alloc(0), contentType: 'image/svg+xml' });
 mockBuildMediaLinks.mockResolvedValue([]);
+mockFindAiring.mockResolvedValue(null);
+mockItemGenres.mockResolvedValue([]);
 
 const config = { webhookUrl: 'https://discord.com/api/webhooks/123/abc' };
 const destination = { id: 'dest-1', name: 'My Discord' };
@@ -106,85 +124,135 @@ describe('discordType.render', () => {
     expect(embed.fields?.[1]).toEqual({ name: 'Rule', value: 'Test Rule', inline: true });
   });
 
-  it('builds the stream started embed', async () => {
-    const embed = await render({ type: 'session_started', payload: session });
-
-    expect(embed.title).toBe('Stream Started');
-    expect(embed.color).toBe(0x3498db);
-    expect(fieldNames(embed)).toEqual(['User', 'Media', 'Year', 'Playback', 'Location', 'Player']);
-    expect(embed.fields?.[3]?.value).toBe('Direct Play');
-    expect(embed.fields?.[4]?.value).toBe('New York, US');
-  });
-
-  it('labels the year of a movie as Year, not Episode', async () => {
+  it('builds a movie card: title and year, genres and runtime, then how it is watched', async () => {
+    mockItemGenres.mockResolvedValueOnce(['Comedy', 'Horror', 'Thriller', 'Cult']);
     const movie = createMockActiveSession({
       mediaType: 'movie',
       mediaTitle: 'The Greasy Strangler',
-      grandparentTitle: null,
-      seasonNumber: null,
-      episodeNumber: null,
       year: 2016,
+      totalDurationMs: 93 * 60_000,
+      product: 'Plex for iOS',
+      geoCity: 'Fayetteville',
+      ratingKey: '4242',
     });
-    for (const type of ['session_started', 'session_stopped'] as const) {
-      const embed = await render({ type, payload: movie });
-      expect(embed.fields?.find((f) => f.name === 'Media')?.value).toBe('The Greasy Strangler');
-      expect(embed.fields?.find((f) => f.name === 'Year')?.value).toBe('2016');
-      expect(fieldNames(embed)).not.toContain('Episode');
-    }
+
+    const embed = await render({ type: 'session_started', payload: movie });
+
+    expect(embed).toEqual({
+      author: { name: 'testuser is watching' },
+      title: 'The Greasy Strangler (2016)',
+      description: 'Comedy · Horror · Thriller · 1h 33m\nPlex for iOS · Direct Play · Fayetteville',
+      color: 0xf1c40f,
+    });
+    expect(mockItemGenres).toHaveBeenCalledWith(movie.serverId, '4242', null);
   });
 
-  it('shows a Live TV programme with its show like an episode', async () => {
-    const live = createMockActiveSession({
-      mediaType: 'live',
-      mediaTitle: 'Baby Kangaroos and Chickens',
-      grandparentTitle: 'Animal Control',
-      seasonNumber: 2,
-      episodeNumber: 5,
+  it('leaves out what a movie card does not know', async () => {
+    const movie = createMockActiveSession({ year: null, totalDurationMs: null });
+    const embed = await render({ type: 'session_started', payload: movie });
+
+    expect(embed.title).toBe('Test Movie');
+    expect(embed.description).toBe('Plex Web · Direct Play · New York');
+  });
+
+  it('builds a TV episode card: the show, its episode, then how it is watched', async () => {
+    const episode = createMockActiveSession({
+      mediaType: 'episode',
+      mediaTitle: 'Best Men',
+      grandparentTitle: 'Modern Family',
+      seasonNumber: 4,
+      episodeNumber: 17,
+      product: 'Plex for Apple TV',
+      geoCity: 'Bentonville',
     });
-    const embed = await render({ type: 'session_started', payload: live });
-    expect(embed.fields?.find((f) => f.name === 'Media')?.value).toBe('Animal Control');
-    expect(embed.fields?.find((f) => f.name === 'Episode')?.value).toContain(
-      'Baby Kangaroos and Chickens'
+
+    const embed = await render({ type: 'session_started', payload: episode });
+
+    expect(embed).toEqual({
+      author: { name: 'testuser is watching' },
+      title: 'Modern Family',
+      description: 'S4 E17 · Best Men\nPlex for Apple TV · Direct Play · Bentonville',
+      color: 0x3498db,
+    });
+    expect(mockItemGenres).not.toHaveBeenCalled();
+    expect(mockFindAiring).not.toHaveBeenCalled();
+  });
+
+  it('escapes the values a card puts in its description', async () => {
+    const episode = createMockActiveSession({
+      mediaType: 'episode',
+      mediaTitle: '*Hi* _there_',
+      grandparentTitle: 'M*A*S*H',
+      seasonNumber: 1,
+      episodeNumber: 2,
+    });
+    const embed = await render({ type: 'session_started', payload: episode });
+
+    expect(embed.title).toBe('M*A*S*H');
+    expect(embed.description?.split('\n')[0]).toBe('S1 E2 · \\*Hi\\* \\_there\\_');
+  });
+
+  it('keeps the field layout for media without a card of its own', async () => {
+    const track = createMockActiveSession({
+      mediaType: 'track',
+      mediaTitle: 'Song',
+      year: 1999,
+      durationMs: 3_725_000,
+    });
+
+    const started = await render({ type: 'session_started', payload: track });
+    expect(started.title).toBe('Stream Started');
+    expect(fieldNames(started)).toEqual([
+      'User',
+      'Media',
+      'Year',
+      'Playback',
+      'Location',
+      'Player',
+    ]);
+    expect(started.fields?.[3]?.value).toBe('Direct Play');
+    expect(started.fields?.[4]?.value).toBe('New York, US');
+
+    const stopped = await render({ type: 'session_stopped', payload: track });
+    expect(stopped.title).toBe('Stream Ended');
+    expect(fieldNames(stopped)).toEqual(['User', 'Media', 'Year', 'Duration']);
+    expect(stopped.fields?.[3]?.value).toBe('1h 2m');
+  });
+
+  it('places a local session in the one-line summary as the existing rules do', async () => {
+    const at = async (over: Parameters<typeof createMockActiveSession>[0]) =>
+      (
+        await render({
+          type: 'session_started',
+          payload: createMockActiveSession({ totalDurationMs: null, ...over }),
+        })
+      ).description;
+
+    // Escaped for Discord's markdown, which shows the brackets as typed.
+    expect(await at({ isLocal: true, geoCity: 'Chicago', geoCountry: 'US' })).toBe(
+      'Plex Web · Direct Play · Chicago \\(Local Network\\)'
     );
-  });
-
-  it('marks a placed local session in the Location field', async () => {
-    const local = createMockActiveSession({ isLocal: true, geoCity: 'Chicago', geoCountry: 'US' });
-    const embed = await render({ type: 'session_started', payload: local });
-    expect(embed.fields?.find((f) => f.name === 'Location')?.value).toBe(
-      'Chicago, US (Local Network)'
+    expect(await at({ isLocal: true, geoCity: null, geoCountry: 'US' })).toBe(
+      'Plex Web · Direct Play · US \\(Local Network\\)'
     );
+    expect(await at({ isLocal: true, geoCity: null, geoCountry: 'Local Network' })).toBe(
+      'Plex Web · Direct Play'
+    );
+    expect(await at({ isLocal: true, geoCity: null, geoCountry: null })).toBe(
+      'Plex Web · Direct Play'
+    );
+    expect(await at({ geoCity: 'Paris', geoCountry: null })).toBe('Plex Web · Direct Play');
   });
 
-  it('shows the country alone when the placed location has no city', async () => {
-    const local = createMockActiveSession({ isLocal: true, geoCity: null, geoCountry: 'US' });
-    const embed = await render({ type: 'session_started', payload: local });
-    expect(embed.fields?.find((f) => f.name === 'Location')?.value).toBe('US (Local Network)');
-  });
-
-  it('still omits Location for an unplaced local session', async () => {
-    const local = createMockActiveSession({
-      isLocal: true,
-      geoCity: null,
-      geoCountry: 'Local Network',
-    });
-    const embed = await render({ type: 'session_started', payload: local });
-    expect(fieldNames(embed)).not.toContain('Location');
-  });
-
-  it('omits Location for a local session with no country', async () => {
-    const local = createMockActiveSession({ isLocal: true, geoCity: null, geoCountry: null });
-    const embed = await render({ type: 'session_started', payload: local });
-    expect(fieldNames(embed)).not.toContain('Location');
-  });
-
-  it('builds the stream stopped embed with a formatted duration', async () => {
+  it('builds the ended card with the same title and the watch time', async () => {
     const embed = await render({ type: 'session_stopped', payload: session });
 
-    expect(embed.title).toBe('Stream Ended');
-    expect(embed.color).toBe(0x95a5a6);
-    expect(fieldNames(embed)).toEqual(['User', 'Media', 'Year', 'Duration']);
-    expect(embed.fields?.[3]?.value).toBe('1h 2m');
+    expect(embed).toEqual({
+      author: { name: 'testuser stopped watching' },
+      title: 'Test Movie (2024)',
+      description: '2h\nWatched for 1h 2m',
+      color: 0x95a5a6,
+    });
   });
 
   const avatar = 'https://plex.tv/users/abc123/avatar?c=1700000000';
@@ -194,15 +262,14 @@ describe('discordType.render', () => {
       user: { id: 'su-1', username: 'testuser', thumbUrl, identityName: 'Test User' },
     });
 
-  it.each(['session_started', 'session_stopped'] as const)(
-    'names the viewer with their picture on %s',
-    async (type) => {
-      const embed = await render({ type, payload: withAvatar(avatar) });
+  it.each([
+    ['session_started', 'Test User is watching'],
+    ['session_stopped', 'Test User stopped watching'],
+  ] as const)('names the viewer with their picture on %s', async (type, name) => {
+    const embed = await render({ type, payload: withAvatar(avatar) });
 
-      expect(embed.author).toEqual({ name: 'Test User', icon_url: avatar });
-      expect(embed.fields?.[0]).toEqual({ name: 'User', value: 'Test User', inline: true });
-    }
-  );
+    expect(embed.author).toEqual({ name, icon_url: avatar });
+  });
 
   it('names the viewer with their picture on a violation', async () => {
     const embed = await render({
@@ -224,14 +291,15 @@ describe('discordType.render', () => {
     ['https://plex.example.com/photo?X-Plex-Token=secret'],
     ['https://jellyfin.example.com/Users/abc/Images/Primary?api_key=secret'],
     ['https://user:pass@plex.tv/users/abc/avatar'],
-  ])('leaves the author off when the picture is %s', async (thumbUrl) => {
+  ])('leaves the picture off when it is %s', async (thumbUrl) => {
     const started = await render({ type: 'session_started', payload: withAvatar(thumbUrl) });
     const flagged = await render({
       type: 'violation',
       payload: { ...violation, user: { ...violation.user, thumbUrl } },
     });
 
-    expect(started.author).toBeUndefined();
+    // A stream card names its viewer in the author line, so that stays, without the picture.
+    expect(started.author).toEqual({ name: 'Test User is watching' });
     expect(flagged.author).toBeUndefined();
     expect(JSON.stringify([started, flagged])).not.toMatch(/secret|192\.168|plex\.local/);
   });
@@ -450,11 +518,11 @@ const automationCtx = (over: { title?: string; body?: string } = {}): RenderCont
 });
 
 describe('discordType.render with an automation source', () => {
-  it('keeps the builtin stream title when nothing is overridden', async () => {
+  it("keeps the card's own title and text when nothing is overridden", async () => {
     const embed = await render({ type: 'session_started', payload: session }, automationCtx());
 
-    expect(embed.title).toBe('Stream Started');
-    expect(embed.description).toBeUndefined();
+    expect(embed.title).toBe('Test Movie (2024)');
+    expect(embed.description).toBe('2h\nPlex Web · Direct Play · New York');
   });
 
   it('uses the rendered override for the title and the description', async () => {
@@ -720,7 +788,7 @@ describe('discordType stream posters', () => {
 
     expect(message.poster).toBeUndefined();
     expect(message.embed.thumbnail).toBeUndefined();
-    expect(message.embed.title).toBe('Stream Started');
+    expect(message.embed.title).toBe('Animal Control');
   });
 
   it('asks for no poster when the stream has no thumb', async () => {
@@ -731,6 +799,197 @@ describe('discordType stream posters', () => {
     );
 
     expect(mockProxyImage).not.toHaveBeenCalled();
+  });
+});
+
+describe('discord Live TV cards', () => {
+  afterEach(() => {
+    mockProxyImage.mockResolvedValue({ data: Buffer.alloc(0), contentType: 'image/svg+xml' });
+    mockFindAiring.mockResolvedValue(null);
+    vi.unstubAllEnvs();
+  });
+
+  const showPoster = 'https://guide.example.com/media/artwork/mf-poster.jpg?v=1';
+  const logo = 'https://guide.example.com/images/uploads/sitcoms_icon.png?v=1';
+  const startedAt = new Date('2026-10-24T20:05:00.000Z');
+  const live = createMockActiveSession({
+    serverId: 'server-1',
+    mediaType: 'live',
+    mediaTitle: 'Best Men',
+    grandparentTitle: 'Modern Family',
+    seasonNumber: 4,
+    episodeNumber: 17,
+    thumbPath: showPoster,
+    product: 'Plex for Apple TV',
+    videoDecision: 'transcode',
+    isTranscode: true,
+    geoCity: 'Bentonville',
+    startedAt,
+  });
+
+  // What the guide lookup finds for it: channel 5, "Sitcoms", and Abbott Elementary at 3:30 PM Chicago.
+  const nextStart = Date.parse('2026-10-24T20:30:00.000Z');
+  const airing = {
+    channel: { id: '4', number: '5', title: '5 Sitcoms', callSign: 'Sitcoms', thumb: logo },
+    beginsAt: Date.parse('2026-10-24T20:00:00.000Z'),
+    endsAt: nextStart,
+    next: {
+      type: 'episode',
+      title: 'Pilot',
+      showTitle: 'Abbott Elementary',
+      seasonNumber: 1,
+      episodeNumber: 1,
+      year: null,
+      beginsAt: nextStart,
+      endsAt: nextStart + 1_800_000,
+      channel: { id: '4', number: '5', title: '5 Sitcoms', callSign: 'Sitcoms', thumb: logo },
+    },
+  };
+
+  it('names the channel, what is on now and next, and shows its logo', async () => {
+    vi.stubEnv('TZ', 'America/Chicago');
+    mockFindAiring.mockResolvedValue(airing);
+    mockProxyImage.mockResolvedValue({ data: Buffer.from('png'), contentType: 'image/png' });
+
+    const message = await discordType.render(
+      { type: 'session_started', payload: live },
+      config,
+      systemCtx
+    );
+
+    expect(message.embed).toEqual({
+      author: { name: 'testuser tuned in' },
+      title: 'Channel 5 · Sitcoms',
+      description: [
+        'Now: Modern Family · S4 E17 Best Men',
+        'Next: Abbott Elementary at 3:30 PM',
+        'Plex for Apple TV · Transcode · Bentonville',
+      ].join('\n'),
+      color: 0xe74c3c,
+      thumbnail: { url: 'attachment://poster.png' },
+    });
+    expect(mockFindAiring).toHaveBeenCalledWith(live, startedAt, { next: true });
+    expect(mockProxyImage).toHaveBeenCalledTimes(1);
+    expect(mockProxyImage).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: 'server-1', imagePath: logo })
+    );
+  });
+
+  it("falls back to the show's poster when the logo can't be fetched", async () => {
+    mockFindAiring.mockResolvedValue({ ...airing, next: null });
+    mockProxyImage.mockImplementation(async ({ imagePath }: { imagePath: string }) => {
+      if (imagePath === logo) throw new Error('Image URL origin is not in EXTERNAL_IMAGE_ORIGINS');
+      return { data: Buffer.from('jpeg'), contentType: 'image/jpeg' };
+    });
+
+    const message = await discordType.render(
+      { type: 'session_started', payload: live },
+      config,
+      systemCtx
+    );
+
+    expect(mockProxyImage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ imagePath: showPoster })
+    );
+    expect(message.embed.thumbnail).toEqual({ url: 'attachment://poster.jpg' });
+    expect(message.embed.description).not.toContain('Next:');
+  });
+
+  it('titles the card with the show and says Live TV when no channel is found', async () => {
+    const embed = await render({ type: 'session_started', payload: live });
+
+    expect(embed).toEqual({
+      author: { name: 'testuser tuned in' },
+      title: 'Modern Family',
+      description: 'Live TV · S4 E17 · Best Men\nPlex for Apple TV · Transcode · Bentonville',
+      color: 0xe74c3c,
+    });
+  });
+
+  it('shows a film on a channel by its title and year', async () => {
+    mockFindAiring.mockResolvedValue({ ...airing, next: null });
+    const film = createMockActiveSession({
+      mediaType: 'live',
+      mediaTitle: 'Little Big Man',
+      year: 1970,
+      grandparentTitle: null,
+    });
+
+    const embed = await render({ type: 'session_started', payload: film });
+    expect(embed.description?.split('\n')[0]).toBe('Now: Little Big Man \\(1970\\)');
+  });
+
+  it("uses the channel a session carries itself, and asks no Plex guide for another server's", async () => {
+    const jellyfin = createMockActiveSession({
+      mediaType: 'live',
+      mediaTitle: 'News at Six',
+      channelTitle: 'BBC One',
+      channelIdentifier: '101',
+      server: { id: 'server-2', name: 'Jelly', type: 'jellyfin' },
+    });
+
+    const embed = await render({ type: 'session_started', payload: jellyfin });
+
+    expect(embed.title).toBe('Channel 101 · BBC One');
+    expect(embed.description?.split('\n')[0]).toBe('Now: News at Six \\(2024\\)');
+    expect(mockFindAiring).not.toHaveBeenCalled();
+  });
+
+  it('does not show an internal channel key as its number', async () => {
+    const plexSourced = createMockActiveSession({
+      mediaType: 'live',
+      mediaTitle: 'News',
+      channelTitle: 'KTVA',
+      channelIdentifier: 'C4.52.tunarr.com',
+    });
+    const embed = await render({ type: 'session_started', payload: plexSourced });
+    expect(embed.title).toBe('KTVA');
+  });
+
+  it('builds the ended card from the programme it stopped on, without a next', async () => {
+    mockFindAiring.mockResolvedValue({ ...airing, next: null });
+    const stoppedAt = new Date('2026-10-24T20:25:00.000Z');
+    const stopped = { ...live, stoppedAt, durationMs: 3_725_000 };
+
+    const embed = await render({ type: 'session_stopped', payload: stopped });
+
+    expect(embed).toEqual({
+      author: { name: 'testuser tuned out' },
+      title: 'Channel 5 · Sitcoms',
+      description: 'Was on: Modern Family · S4 E17 Best Men\nWatched for 1h 2m',
+      color: 0x95a5a6,
+    });
+    expect(mockFindAiring).toHaveBeenCalledWith(stopped, new Date(stoppedAt.getTime() - 60_000), {
+      next: false,
+    });
+  });
+
+  it('reads the lookup moment from a session that came through the queue as JSON', async () => {
+    const queued = JSON.parse(JSON.stringify(live)) as typeof live;
+    await render({ type: 'session_started', payload: queued });
+    expect(mockFindAiring).toHaveBeenCalledWith(queued, startedAt, { next: true });
+  });
+});
+
+describe('discord card formatting', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('writes a runtime in hours and minutes', () => {
+    expect(formatRuntime(93 * 60_000)).toBe('1h 33m');
+    expect(formatRuntime(45 * 60_000)).toBe('45m');
+    expect(formatRuntime(120 * 60_000)).toBe('2h');
+  });
+
+  it("writes a start time in Tracearr's time zone", () => {
+    const at = Date.parse('2026-10-24T20:30:00.000Z');
+    vi.stubEnv('TZ', 'America/Chicago');
+    expect(formatClock(at)).toBe('3:30 PM');
+    vi.stubEnv('TZ', 'Europe/London');
+    expect(formatClock(at)).toBe('9:30 PM');
+    vi.stubEnv('TZ', 'Not/AZone');
+    expect(formatClock(at)).toMatch(/^\d{1,2}:30 [AP]M$/);
   });
 });
 

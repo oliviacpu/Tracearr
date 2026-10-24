@@ -62,12 +62,17 @@ const USERNAME_MAX = 80;
  * The name and picture the messages are posted under: DISCORD_USERNAME and
  * DISCORD_AVATAR_URL, else Tracearr's own. The picture must be a public https URL
  * Discord can fetch, with no credentials; anything else is ignored with a warning.
+ * Set to an empty value, either one is left out of the message, so the webhook's own
+ * name or picture (set in Discord) shows: one place to change them.
  */
-export function discordSender(): { username: string; avatarUrl: string } {
-  const name = (process.env.DISCORD_USERNAME ?? '').trim();
+export function discordSender(): { username?: string; avatarUrl?: string } {
+  const name = process.env.DISCORD_USERNAME?.trim();
+  const avatar = process.env.DISCORD_AVATAR_URL?.trim();
   return {
-    username: name ? [...name].slice(0, USERNAME_MAX).join('') : USERNAME,
-    avatarUrl: senderAvatar(),
+    ...(name !== '' && {
+      username: name ? [...name].slice(0, USERNAME_MAX).join('') : USERNAME,
+    }),
+    ...(avatar !== '' && { avatarUrl: senderAvatar() }),
   };
 }
 
@@ -578,8 +583,8 @@ async function post(
   const filename = message.poster && posterFilename(message.poster.contentType);
   const sender = discordSender();
   const payload = {
-    username: sender.username,
-    avatar_url: sender.avatarUrl,
+    ...(sender.username !== undefined && { username: sender.username }),
+    ...(sender.avatarUrl !== undefined && { avatar_url: sender.avatarUrl }),
     allowed_mentions: { parse: [] },
     embeds: [{ ...message.embed, timestamp: new Date().toISOString() }],
     ...(filename && { attachments: [{ id: 0, filename }] }),

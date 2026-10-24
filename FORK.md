@@ -146,7 +146,8 @@ instead (`liveTvWatch.ts`, used by `notificationQueue.ts`).
 A Discord stream message was the same block of fields for everything (User, Media, Episode or Year, Playback,
 Location, Player), so a film, an episode and a Live TV channel looked alike, and a Live TV message couldn't say which
 channel: Plex's Live TV session from an XMLTV guide (Tunarr) carries no `sourceTitle` and no channel fields on its
-Media, which is why `channelTitle`, `channelIdentifier` and `channelThumb` stay empty for those sessions.
+Media, which is why `channelTitle`, `channelIdentifier` and `channelThumb` stayed empty for those sessions (the
+guide fills them now; see the channel patch below).
 
 - Stream started and stream ended embeds in Discord are now a card per kind. The author line names the viewer ("Sam
   is watching", "tuned in" for Live TV, "stopped watching" or "tuned out" when it ends), with their picture under the
@@ -174,3 +175,59 @@ Media, which is why `channelTitle`, `channelIdentifier` and `channelThumb` stay 
   `EXTERNAL_IMAGE_ORIGINS`, by the Plex server's photo transcoder) and uploaded with the message; when it can't be
   fetched, the session's poster (for an XMLTV episode, the show's) is used. No server URL or token reaches Discord.
 - The held Live TV stop (`liveTvWatch.ts`) is unchanged: the ended card looks up the programme the watch ended on.
+
+### A Live TV session without a channel takes it from the Plex guide, and the UI shows it
+
+Plex names no channel on a Live TV session from an XMLTV guide (Tunarr), so Tracearr stored none, and the web UI
+never showed a session's channel anyway: a Live TV card read like a film with no year.
+
+- The poller and the SSE path fill a Plex Live TV session's `channelTitle` (the name alone, "Sitcoms"),
+  `channelIdentifier` (the number viewers know, "3") and `channelThumb` (the guide's logo) from the guide airing it
+  plays, through the lookup the Discord cards use (`liveTvGuide.ts`). The airing is matched by the session's `guid`,
+  the programme's guide id Plex puts on both the session and the grid item
+  (`tv.plex.xmltv://episode/The%20Good%20Place/2/3`), before the show, season and episode or film title
+  (`liveTvSession.ts`, `fillPlexLiveTv`; `PlexGuideAiring.guid`; `MediaSession.media.guid`, not stored).
+- Each session is looked up once and kept while it is seen (Plex starts a new session per programme, and a session
+  not seen for 30 minutes is forgotten). A lookup may hold a poll up 2 seconds; one that fails or runs late is
+  retried a minute later. With the guide's per-minute grid cache that is at most one grid request a minute per
+  server while Live TV plays, plus the DVR list every 10 minutes. A session recorded before its channel was found
+  gets it written later; a stored channel is never overwritten. A session that names its own channel, other media
+  and Jellyfin or Emby are unchanged.
+- The Now Playing card shows "Channel 3 · Sitcoms" with the logo under the programme, and the session sheet next to
+  "Live TV". The number is shown only when it looks like one ("5", "5.1"), not a guide key like
+  `C3.51.tunarr.com`. The logo goes through the image proxy (an outside URL only from an origin in
+  `EXTERNAL_IMAGE_ORIGINS`, fetched by the Plex server's photo transcoder) and is hidden when it can't load. The
+  poster stays the programme's (for an XMLTV episode, its show's).
+- Sessions recorded before this change keep no channel.
+
+### A Live TV transcode says whether it keeps up
+
+Plex's `speed` for a Live TV transcode is instantaneous and jumps (4.5x, then 0.7x 20 seconds later), and below 1x
+it usually means the transcoder is waiting for the live input, so an amber "0.8x" read like trouble when there was
+none. A live source arrives in real time; what matters is whether the transcoder keeps up, which shows in
+`maxOffsetAvailable`, the point it has ready: it grows a second per second when it does.
+
+- Each sighting of a Plex Live TV session (poll or SSE fetch) adds a sample in memory, and the growth over the last
+  minute, once it covers at least 20 seconds, sets `transcodeInfo.livePace` (`keeping_up` or `falling_behind`) and
+  `livePaceRate` (seconds readied per second, 1 = real time). Falling behind is under 90% and more than 4 seconds
+  short (two 2-second segments, so one late segment over a short span doesn't count); back to keeping up from 95%,
+  and in between the last verdict holds. A throttled transcoder is ahead of the player, so keeping up. Paused, or a
+  ready point that goes back (a restarted transcode), measures afresh. A Tracearr restart measures from scratch.
+- Both are optional fields of the stored `transcode_info` JSON (no migration), and they don't trigger extra
+  database writes. Other media and servers get none.
+- The stream details' Speed row reads "Keeping up" or "Falling behind" (amber), with the measured rate and Plex's own
+  speed in its tooltip; until a pace is measured it shows Plex's speed as before.
+
+### A Plex Live TV transcode's bitrate is shown as its maximum
+
+Plex reports a transcode's target as its bitrate: the most the player's quality setting allows (an Apple TV on
+Maximum caps video at 20,121 kbps, so with 640k of audio the session says 20,761), not what it really sends, which
+Plex's API doesn't give. A Live TV encode with a quality floor runs far below it (5.8 Mbps measured from Plex's
+segments against "20.8 Mbps").
+
+- For a Plex Live TV session whose video is transcoded, the stream details' overall Bitrate and the video stream's
+  bitrate read "max 20.8 Mbps", with a tooltip saying what the number is (`StreamDetailsPanel.tsx`).
+- A live source has no file to take a bitrate from, so a blank source (or unmeasured stream) bitrate on Live TV reads
+  "Live, unknown" instead of a dash; a bitrate the server did report is shown as it is.
+- Films, episodes, music, Live TV without a video transcode, the card's quality label and the Bandwidth page are
+  unchanged.

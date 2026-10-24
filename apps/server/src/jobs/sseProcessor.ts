@@ -75,6 +75,7 @@ import {
 import { PENDING_STOP_PERSIST_MIN_PROGRESS_MS, type PendingSessionData } from './poller/types.js';
 import { broadcastViolations } from './poller/violations.js';
 import { attributePlexLiveViewers, trackedPlaybackCheck } from '../services/proxyLiveViewers.js';
+import { fillPlexLiveTv, lateChannelFields } from '../services/liveTvSession.js';
 
 const sseLogger = createLogger('SSEProcessor');
 
@@ -1015,6 +1016,8 @@ async function fetchFullSession(
           )[0] ?? null
       )
     );
+    // Fork: a Live TV session's channel from the guide when Plex names none
+    await fillPlexLiveTv(server, [session]);
     // Stamp identity like the poller does or SSE session rows insert with null media columns
     if (session.ratingKey) {
       const identityMap = await batchGetLibraryItemIdentity(server.id, [session.ratingKey]);
@@ -1402,6 +1405,8 @@ async function updateExistingSession(
     isTranscode: processed.isTranscode,
     videoDecision: processed.videoDecision,
     audioDecision: processed.audioDecision,
+    // Fork: a Live TV channel the guide named after the session was recorded
+    ...lateChannelFields(existingSession, processed),
   };
 
   // Update stream details when valid (skip if API returned incomplete data)
@@ -1525,6 +1530,7 @@ async function updateExistingSession(
       cached.isTranscode = processed.isTranscode;
       cached.videoDecision = processed.videoDecision;
       cached.audioDecision = processed.audioDecision;
+      Object.assign(cached, lateChannelFields(cached, processed));
 
       // Update stream details in cache when valid
       if (processed.sourceAudioCodec || processed.sourceVideoCodec) {

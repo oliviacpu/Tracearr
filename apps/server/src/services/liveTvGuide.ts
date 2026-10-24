@@ -25,6 +25,8 @@ export interface LiveTvProgrammeRef {
   grandparentTitle: string | null;
   seasonNumber: number | null;
   episodeNumber: number | null;
+  /** The programme's guide id (Plex's `guid` on the session), when the session has one. */
+  guid?: string | null;
 }
 
 export interface LiveTvAiring {
@@ -186,7 +188,9 @@ export function createLiveTvGuide(deps: LiveTvGuideDeps) {
       const airings = await cached(caches.grid, `${serverId}|${guideId}|${from}`, GRID_TTL_MS, () =>
         source.airings(guideId, { from, to: from + MINUTE })
       );
-      const matches = airings.filter((a) => airingMatches(a, session));
+      // The guide id names the programme exactly; titles are the fallback for a session without one.
+      const byGuid = session.guid ? airings.filter((a) => a.guid === session.guid) : [];
+      const matches = byGuid.length > 0 ? byGuid : airings.filter((a) => airingMatches(a, session));
       const onAir = matches.filter((a) => a.beginsAt <= at && at < a.endsAt);
       const pool = onAir.length > 0 ? onAir : matches;
       // The same programme on two channels at once can't say which one the session tuned.
@@ -203,16 +207,18 @@ export function createLiveTvGuide(deps: LiveTvGuideDeps) {
   return {
     /**
      * The channel the session's programme aired on at `at` (a moment it was playing), and
-     * with `next` the channel's following programme. Null when that can't be told in time.
+     * with `next` the channel's following programme. Null when that can't be told in time
+     * (`timeoutMs`, else the guide's own budget); a request still running is kept for the
+     * next lookup.
      */
     async findAiring(
       session: LiveTvProgrammeRef,
       at: Date,
-      options: { next?: boolean } = {}
+      options: { next?: boolean; timeoutMs?: number } = {}
     ): Promise<LiveTvAiring | null> {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), timeoutMs);
+        timer = setTimeout(() => resolve(null), options.timeoutMs ?? timeoutMs);
       });
       try {
         return await Promise.race([lookup(session, at.getTime(), options.next ?? false), timeout]);

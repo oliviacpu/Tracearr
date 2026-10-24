@@ -107,6 +107,7 @@ import type {
 import { excludeUncountableSessions } from './utils.js';
 import { broadcastViolations } from './violations.js';
 import { attributePlexLiveViewers, trackedPlaybackCheck } from '../../services/proxyLiveViewers.js';
+import { fillPlexLiveTv, lateChannelFields } from '../../services/liveTvSession.js';
 
 // ============================================================================
 // Module State
@@ -747,6 +748,8 @@ async function processServerSessions(
           )[0] ?? null
       )
     );
+    // Fork: a Live TV session's channel from the guide when Plex names none
+    await fillPlexLiveTv(server, processedSessions);
 
     // OPTIMIZATION: Early return if no active sessions from media server
     if (processedSessions.length === 0) {
@@ -1662,6 +1665,8 @@ async function processServerSessions(
             ...(existingSession.sessionKey !== processed.sessionKey && {
               sessionKey: processed.sessionKey,
             }),
+            // Fork: a Live TV channel the guide named after the session was recorded
+            ...lateChannelFields(existingSession, processed),
           };
 
           // Update stream details when valid (skip if API returned incomplete data)

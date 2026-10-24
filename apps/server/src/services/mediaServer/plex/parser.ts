@@ -812,6 +812,7 @@ export function parseSession(
       durationMs,
       year: parseOptionalNumber(item.year),
       thumbPath: parseOptionalString(item.thumb),
+      guid: parseOptionalString(item.guid),
     },
     playback: {
       state: parsePlaybackState(player.state),

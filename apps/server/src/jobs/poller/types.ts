@@ -139,6 +139,11 @@ export interface ProcessedSession extends StreamDetailFields {
   channelThumb: string | null;
   /** Live TV session UUID (stable across channel changes, extracted from SSE key) */
   liveUuid: string | null;
+  /**
+   * Plex's guid for the item. A Live TV programme's is its guide id, which finds its channel
+   * in the guide when Plex leaves the channel out (liveTvSession.ts). Not stored.
+   */
+  guid?: string;
 
   // Music track metadata
   /** Artist name */

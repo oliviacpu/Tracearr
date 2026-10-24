@@ -18,6 +18,8 @@ import {
 export interface PlexGuideAiring {
   /** 'episode' or 'movie' (Plex's metadata type of the programme). */
   type: string;
+  /** The programme's guide id, which a Live TV session playing it carries as its `guid`. */
+  guid: string | null;
   title: string;
   /** The show of an episode. */
   showTitle: string | null;
@@ -82,6 +84,7 @@ export function parseGuideGrid(data: unknown): PlexGuideAiring[] {
       if (beginsAt === undefined || endsAt === undefined) continue;
       airings.push({
         type: parseString(item.type),
+        guid: optional(item.guid),
         title: parseString(item.title),
         showTitle: optional(item.grandparentTitle, 255),
         seasonNumber: parseOptionalNumber(item.parentIndex) ?? null,

@@ -53,6 +53,8 @@ export interface MediaSession {
     year?: number;
     /** Poster/thumbnail path */
     thumbPath?: string;
+    /** Plex's guid for the item; a Live TV programme's is its guide id */
+    guid?: string;
   };
 
   /** Episode-specific metadata (only present for episodes) */

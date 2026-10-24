@@ -115,6 +115,7 @@ describe('parseGuideGrid', () => {
 
     expect(episode).toEqual({
       type: 'episode',
+      guid: 'tv.plex.xmltv://episode/Ghosts%20%28US%29/4/19',
       title: 'Pinkus Returns',
       showTitle: 'Ghosts (US)',
       seasonNumber: 4,

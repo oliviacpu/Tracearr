@@ -835,6 +835,7 @@ describe('discord Live TV cards', () => {
     endsAt: nextStart,
     next: {
       type: 'episode',
+      guid: null,
       title: 'Pilot',
       showTitle: 'Abbott Elementary',
       seasonNumber: 1,

@@ -19,6 +19,7 @@ function airing(over: Partial<PlexGuideAiring> & { channelId?: string }): PlexGu
   const { channelId = '4', ...rest } = over;
   return {
     type: 'episode',
+    guid: null,
     title: 'Best Men',
     showTitle: 'Modern Family',
     seasonNumber: 4,
@@ -198,6 +199,35 @@ describe('liveTvGuide.findAiring', () => {
     const guide = createLiveTvGuide({ sourceFor: async () => source, now });
 
     const found = await guide.findAiring(session, new Date(T0 + 10 * MIN));
+    expect(found?.channel.id).toBe('4');
+  });
+
+  it("matches the session's guide id before its titles", async () => {
+    const guid = 'tv.plex.xmltv://episode/Modern%20Family/4/17';
+    // The same show and episode on a second channel, under another programme id.
+    const onFour = airing({ guid });
+    const onNine = airing({
+      guid: 'tv.plex.xmltv://episode/Modern%20Family%20(2009)/4/17',
+      channelId: '9',
+    });
+    const { source } = fakeSource([onNine, onFour]);
+    const guide = createLiveTvGuide({ sourceFor: async () => source, now });
+
+    const found = await guide.findAiring({ ...session, guid }, new Date(T0 + 10 * MIN));
+    expect(found?.channel.id).toBe('4');
+    // Without the id the two airings can't be told apart.
+    guide.clear();
+    await expect(guide.findAiring(session, new Date(T0 + 10 * MIN))).resolves.toBeNull();
+  });
+
+  it('falls back to the titles when no airing carries the session guide id', async () => {
+    const { source } = fakeSource([airing({ guid: 'tv.plex.xmltv://episode/Other/1/1' })]);
+    const guide = createLiveTvGuide({ sourceFor: async () => source, now });
+
+    const found = await guide.findAiring(
+      { ...session, guid: 'tv.plex.xmltv://episode/Modern%20Family/4/17' },
+      new Date(T0 + 10 * MIN)
+    );
     expect(found?.channel.id).toBe('4');
   });
 

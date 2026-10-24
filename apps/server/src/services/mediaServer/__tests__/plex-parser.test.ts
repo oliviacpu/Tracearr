@@ -947,6 +947,25 @@ describe('Plex Live TV Parser', () => {
     );
   });
 
+  it("carries a live programme's guide id, which finds its channel in the guide", () => {
+    const rawSession = {
+      sessionKey: 'live-episode',
+      ratingKey: '38390',
+      guid: 'tv.plex.xmltv://episode/The%20Good%20Place/2/3',
+      title: 'Team Cockroach',
+      type: 'episode',
+      live: '1',
+      User: {},
+      Player: {},
+    };
+
+    const session = parseSession(rawSession);
+
+    expect(session.media.guid).toBe('tv.plex.xmltv://episode/The%20Good%20Place/2/3');
+    // Plex names no channel for an XMLTV guide's programme.
+    expect(session.live).toBeUndefined();
+  });
+
   it('leaves episode metadata off a live movie', () => {
     const rawSession = {
       sessionKey: 'live-movie',
